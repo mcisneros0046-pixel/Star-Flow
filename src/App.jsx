@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { auth, googleProvider, db } from "./firebase";
-import { signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged } from "firebase/auth";
+import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
@@ -277,7 +277,6 @@ export default function StarFlow() {
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => { setUser(u); setAuthLoading(false); if(!u){setEntries([]);setClaimed([]);setDataLoaded(false);} });
-    getRedirectResult(auth).catch(err => console.error("Redirect error:", err));
     return () => unsub();
   }, []);
 
@@ -293,7 +292,7 @@ export default function StarFlow() {
     saveTimer.current = setTimeout(()=>saveUserData(user.uid,{entries:ne,claimed:nc}),500);
   }, [user]);
 
-  const handleGoogleSignIn = async()=>{ setLoginLoading(true); try{await signInWithRedirect(auth,googleProvider);}catch(err){console.error(err);setLoginLoading(false);} };
+  const handleGoogleSignIn = async()=>{ setLoginLoading(true); try{await signInWithPopup(auth,googleProvider);}catch(err){console.error("Sign-in error:",err);} setLoginLoading(false); };
   const handleSignOut = async()=>{ await signOut(auth); };
 
   const addEntry = (entry)=>{ const next=[...entries,entry]; setEntries(next); saveToCloud(next,claimed); };
