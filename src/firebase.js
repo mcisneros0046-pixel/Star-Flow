@@ -3,12 +3,12 @@ import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey:            "AIzaSyAkBVmQcsdvr4ATjnU3YbgxZAl3HXA46GY",
-  authDomain:        "star-flow-3eb19.firebaseapp.com",
-  projectId:         "star-flow-3eb19",
-  storageBucket:     "star-flow-3eb19.firebasestorage.app",
-  messagingSenderId: "206533908974",
-  appId:             "1:206533908974:web:2757f14c8a40d2891a16ff",
+  apiKey:            "AIzaSyDVBpC-BPFNKyt9xU9lZEcZU1L7z1buMrk",
+  authDomain:        "star-flow-796c6.firebaseapp.com",
+  projectId:         "star-flow-796c6",
+  storageBucket:     "star-flow-796c6.firebasestorage.app",
+  messagingSenderId: "53315400000",
+  appId:             "1:53315400000:web:2c1065187bb65393d80aa5",
 };
 
 const app = initializeApp(firebaseConfig);
