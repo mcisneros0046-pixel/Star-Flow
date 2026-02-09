@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { auth, googleProvider, appleProvider, db } from "./firebase";
-import { signInWithPopup, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "firebase/auth";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { signInWithPopup, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile, deleteUser, reauthenticateWithPopup, EmailAuthProvider, reauthenticateWithCredential } from "firebase/auth";
+import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
 
 // ─── PALETTE ─────────────────────────────────────────────────────────────────
 const P = {
@@ -914,6 +914,181 @@ RULES:
   );
 }
 
+// ─── SETTINGS & ACCOUNT MODAL ────────────────────────────────────────────────
+
+function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [deleteTyped, setDeleteTyped] = useState("");
+
+  const providerIds = user.providerData?.map(p => p.providerId) || [];
+  const isGoogle = providerIds.includes("google.com");
+  const isApple = providerIds.includes("apple.com");
+  const isEmail = providerIds.includes("password");
+
+  const signInMethod = isGoogle ? "Google" : isApple ? "Apple" : isEmail ? "Email" : "Unknown";
+  const createdAt = userData?.profile?.createdAt
+    ? new Date(userData.profile.createdAt).toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric" })
+    : "Unknown";
+  const totalEntries = userData?.entries?.length || 0;
+  const totalClaimed = userData?.claimed?.length || 0;
+
+  const handleDeleteAccount = async () => {
+    setDeleteLoading(true);
+    setDeleteError("");
+    try {
+      // Delete Firestore data first
+      await deleteDoc(doc(db, "users", user.uid));
+
+      // Then delete the Firebase Auth account
+      // This may require reauthentication if the session is old
+      try {
+        await deleteUser(user);
+      } catch (reAuthErr) {
+        if (reAuthErr.code === "auth/requires-recent-login") {
+          // Reauthenticate based on provider
+          if (isGoogle) {
+            await reauthenticateWithPopup(user, googleProvider);
+          } else if (isApple) {
+            await reauthenticateWithPopup(user, appleProvider);
+          } else {
+            setDeleteError("For security, please sign out and sign back in, then try deleting again.");
+            setDeleteLoading(false);
+            return;
+          }
+          // Retry delete after reauth
+          await deleteUser(user);
+        } else {
+          throw reAuthErr;
+        }
+      }
+
+      onAccountDeleted();
+    } catch (err) {
+      console.error("Delete error:", err);
+      if (err.code === "auth/requires-recent-login") {
+        setDeleteError("Session expired. Please sign out, sign back in, and try again.");
+      } else {
+        setDeleteError("Something went wrong. Please try again.");
+      }
+    }
+    setDeleteLoading(false);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content modal-reward" onClick={e => e.stopPropagation()} style={{ maxWidth:420 }}>
+        <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:24, fontWeight:600, marginBottom:20 }}>
+          Settings
+        </h2>
+
+        {/* ── Account Info ── */}
+        <div className="settings-section">
+          <h4 className="settings-section-title">Account</h4>
+          <div className="settings-info-grid">
+            {user.photoURL && (
+              <div style={{ display:"flex", justifyContent:"center", marginBottom:12 }}>
+                <img src={user.photoURL} alt="" style={{ width:56, height:56, borderRadius:"50%", border:`2px solid ${P.dim}` }} />
+              </div>
+            )}
+            <div className="settings-info-row">
+              <span className="settings-info-label">Name</span>
+              <span className="settings-info-value">{userData?.profile?.displayName || user.displayName || "—"}</span>
+            </div>
+            <div className="settings-info-row">
+              <span className="settings-info-label">Email</span>
+              <span className="settings-info-value">{user.email || "—"}</span>
+            </div>
+            <div className="settings-info-row">
+              <span className="settings-info-label">Sign-in method</span>
+              <span className="settings-info-value">{signInMethod}</span>
+            </div>
+            <div className="settings-info-row">
+              <span className="settings-info-label">Member since</span>
+              <span className="settings-info-value">{createdAt}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Stats ── */}
+        <div className="settings-section">
+          <h4 className="settings-section-title">Data</h4>
+          <div className="settings-info-grid">
+            <div className="settings-info-row">
+              <span className="settings-info-label">Activities tracked</span>
+              <span className="settings-info-value">{userData?.activities?.length || 0}</span>
+            </div>
+            <div className="settings-info-row">
+              <span className="settings-info-label">Total entries</span>
+              <span className="settings-info-value">{totalEntries}</span>
+            </div>
+            <div className="settings-info-row">
+              <span className="settings-info-label">Rewards claimed</span>
+              <span className="settings-info-value">{totalClaimed}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Actions ── */}
+        <div className="settings-section">
+          <button className="settings-action-btn" onClick={() => { onClose(); onSignOut(); }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+            Sign Out
+          </button>
+
+          <div className="divider" />
+
+          {!confirmDelete ? (
+            <button className="settings-action-btn danger" onClick={() => setConfirmDelete(true)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+              </svg>
+              Delete Account
+            </button>
+          ) : (
+            <div className="delete-confirm">
+              <p style={{ color:"#FF9C8C", fontSize:13, fontWeight:500, marginBottom:8 }}>
+                This will permanently delete your account and all your data. This cannot be undone.
+              </p>
+              <p style={{ color:P.soft, fontSize:12, marginBottom:10 }}>
+                Type <strong style={{ color:P.text }}>DELETE</strong> to confirm:
+              </p>
+              <input type="text" value={deleteTyped} onChange={e => setDeleteTyped(e.target.value)}
+                className="onboard-input" placeholder="Type DELETE"
+                style={{ fontSize:14, padding:"10px 14px", marginBottom:10, textTransform:"uppercase" }} />
+              {deleteError && <p style={{ color:"#FF9C8C", fontSize:12, marginBottom:8 }}>{deleteError}</p>}
+              <div style={{ display:"flex", gap:10 }}>
+                <button className="btn-primary" onClick={handleDeleteAccount}
+                  disabled={deleteTyped.toUpperCase() !== "DELETE" || deleteLoading}
+                  style={{ background: deleteTyped.toUpperCase() === "DELETE" ? "#C0392B" : P.dim, flex:1 }}>
+                  {deleteLoading ? (
+                    <span style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+                      <span className="ai-spinner" style={{ borderTopColor:"#FF9C8C" }} /> Deleting…
+                    </span>
+                  ) : "Permanently Delete"}
+                </button>
+                <button className="btn-ghost" onClick={() => { setConfirmDelete(false); setDeleteTyped(""); setDeleteError(""); }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {!confirmDelete && (
+          <div style={{ textAlign:"center", marginTop:16 }}>
+            <button className="btn-ghost" onClick={onClose}>Close</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── LOGIN SCREEN ────────────────────────────────────────────────────────────
 function LoginScreen({ onGoogleSignIn, onAppleSignIn, onEmailSignIn, onEmailSignUp, onPasswordReset, loading, authError }) {
   const [mode, setMode] = useState("landing"); // "landing" | "email-signin" | "email-signup" | "reset"
@@ -1105,6 +1280,7 @@ export default function StarFlow() {
   const [viewMonth, setViewMonth] = useState(new Date().getMonth() + 1);
   const [encouragement] = useState(() => ENCOURAGEMENTS[Math.floor(Math.random() * ENCOURAGEMENTS.length)]);
   const [showGuide, setShowGuide] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const saveTimer = useRef(null);
 
   // Auth listener
@@ -1311,9 +1487,15 @@ export default function StarFlow() {
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:8 }}>
           <button className="help-btn" onClick={() => setShowGuide(!showGuide)}>?</button>
+          <button className="help-btn settings-btn" onClick={() => setShowSettings(true)} title="Settings">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
           {user.photoURL
-            ? <img src={user.photoURL} alt="" className="avatar" onClick={handleSignOut} title="Sign out" />
-            : <button className="help-btn" onClick={handleSignOut} title="Sign out">↩</button>}
+            ? <img src={user.photoURL} alt="" className="avatar" onClick={() => setShowSettings(true)} title="Account" />
+            : <button className="help-btn" onClick={() => setShowSettings(true)} title="Account">↩</button>}
         </div>
       </header>
 
@@ -1541,6 +1723,17 @@ export default function StarFlow() {
         </div>
       </div>
     )}
+
+    {/* ── Settings & Account ── */}
+    {showSettings && (
+      <SettingsModal
+        user={user}
+        userData={userData}
+        onClose={() => setShowSettings(false)}
+        onSignOut={handleSignOut}
+        onAccountDeleted={() => { setShowSettings(false); }}
+      />
+    )}
     </div>
   );
 }
@@ -1733,6 +1926,21 @@ textarea.onboard-input{font-family:'Inter',sans-serif;line-height:1.5;}
 .target-row:last-child{border-bottom:none;}
 .target-btn{background:${P.glassSolid};border:1px solid ${P.dim};color:${P.text};width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:16px;font-weight:600;transition:all 0.2s;display:flex;align-items:center;justify-content:center;}
 .target-btn:hover{border-color:${P.nebula};color:${P.nebula};}
+
+/* ── Settings ── */
+.settings-section{margin-bottom:16px;}
+.settings-section-title{color:${P.soft};font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;}
+.settings-info-grid{display:flex;flex-direction:column;gap:2px;}
+.settings-info-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid ${P.divider};}
+.settings-info-row:last-child{border-bottom:none;}
+.settings-info-label{color:${P.muted};font-size:13px;}
+.settings-info-value{color:${P.text};font-size:13px;font-weight:500;text-align:right;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.settings-action-btn{display:flex;align-items:center;gap:10px;width:100%;padding:12px 0;background:none;border:none;color:${P.text};font-size:14px;font-weight:500;cursor:pointer;transition:color 0.2s;font-family:'Inter',sans-serif;text-align:left;}
+.settings-action-btn:hover{color:${P.nebula};}
+.settings-action-btn.danger{color:${P.muted};}
+.settings-action-btn.danger:hover{color:#FF9C8C;}
+.delete-confirm{padding:12px 16px;background:rgba(192,57,43,0.08);border:1px solid rgba(192,57,43,0.2);border-radius:14px;}
+.settings-btn svg{display:block;}
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar{width:6px;}
