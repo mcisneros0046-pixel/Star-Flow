@@ -1,37 +1,23 @@
-// Vercel Serverless Function — proxies AI requests to Anthropic
-// The API key is stored as a Vercel environment variable, never exposed to the browser
+import { initializeApp } from "firebase/app";
+import { getAuth, GoogleAuthProvider, OAuthProvider } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 
-export default async function handler(req, res) {
-  // Only allow POST
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+const firebaseConfig = {
+  apiKey: "AIzaSyDVBpC-BPFNKyt9xU9lZEcZU1L7z1buMrk",
+  authDomain: "star-flow-796c6.firebaseapp.com",
+  projectId: "star-flow-796c6",
+  storageBucket: "star-flow-796c6.firebasestorage.app",
+  messagingSenderId: "53315400000",
+  appId: "1:53315400000:web:2c1065187bb65393d80aa5",
+};
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({ error: "API key not configured" });
-  }
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify(req.body),
-    });
+const googleProvider = new GoogleAuthProvider();
+const appleProvider = new OAuthProvider("apple.com");
+appleProvider.addScope("email");
+appleProvider.addScope("name");
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json(data);
-    }
-
-    return res.status(200).json(data);
-  } catch (err) {
-    console.error("Anthropic proxy error:", err);
-    return res.status(500).json({ error: "Failed to reach AI service" });
-  }
-}
+export { auth, googleProvider, appleProvider, db };
