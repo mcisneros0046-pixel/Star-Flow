@@ -431,7 +431,7 @@ function LogModal({ onClose, onLog, activities, allEntries }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={e => e.stopPropagation()}>
         <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:26, fontWeight:600, marginBottom:24 }}>
-          Add a Moment
+          Add Star
         </h2>
 
         {/* Date selector button */}
