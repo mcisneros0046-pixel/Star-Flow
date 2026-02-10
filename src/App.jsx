@@ -381,27 +381,47 @@ function LogModal({ onClose, onLog, activities, allEntries }) {
   const [duration, setDuration] = useState("30");
   const [mindful, setMindful] = useState(false);
   const [selectedDate, setSelectedDate] = useState(todayStr());
+  const [showCal, setShowCal] = useState(false);
 
-  // Build last 7 days
-  const datePills = [];
-  for (let i = 0; i < 8; i++) {
-    const d = new Date(); d.setDate(d.getDate() - i);
-    const ds = d.toISOString().slice(0, 10);
-    const label = i === 0 ? "Today"
-      : i === 1 ? "Yesterday"
-      : d.toLocaleDateString("en-US", { weekday:"short", month:"short", day:"numeric" });
-    datePills.push({ ds, label });
-  }
+  const today = new Date();
+  const twoWeeksAgo = new Date(); twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+
+  // Format selected date for display
+  const selD = new Date(selectedDate + "T12:00:00");
+  const isToday = selectedDate === todayStr();
+  const dateDisplay = isToday ? "Today" : selD.toLocaleDateString("en-US", { weekday:"short", month:"short", day:"numeric" });
+
+  // Mini calendar state
+  const [calMonth, setCalMonth] = useState(today.getMonth());
+  const [calYear, setCalYear] = useState(today.getFullYear());
+
+  const calDaysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const calFirstDay = (new Date(calYear, calMonth, 1).getDay() + 6) % 7; // Mon=0
+  const calCells = [];
+  for (let i = 0; i < calFirstDay; i++) calCells.push(null);
+  for (let d = 1; d <= calDaysInMonth; d++) calCells.push(d);
+
+  const canPrevMonth = () => {
+    const prev = new Date(calYear, calMonth - 1, 1);
+    return prev >= new Date(twoWeeksAgo.getFullYear(), twoWeeksAgo.getMonth(), 1);
+  };
+  const canNextMonth = () => {
+    const next = new Date(calYear, calMonth + 1, 1);
+    return next <= new Date(today.getFullYear(), today.getMonth(), 1);
+  };
+
+  const handleCalSelect = (day) => {
+    const ds = `${calYear}-${String(calMonth + 1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    const d = new Date(ds + "T12:00:00");
+    if (d > today || d < twoWeeksAgo) return;
+    setSelectedDate(ds);
+    setShowCal(false);
+  };
 
   const handleLog = () => {
     const mins = parseInt(duration, 10);
     if (!mins || mins < 1) return;
-    onLog({
-      date: selectedDate,
-      activity_type: activityId,
-      duration_min: mins,
-      mindful,
-    });
+    onLog({ date: selectedDate, activity_type: activityId, duration_min: mins, mindful });
     onClose();
   };
 
@@ -414,21 +434,78 @@ function LogModal({ onClose, onLog, activities, allEntries }) {
           Add a Moment
         </h2>
 
-        {/* Date selector */}
-        <div style={{ display:"flex", gap:6, overflowX:"auto", marginBottom:20, paddingBottom:4, WebkitOverflowScrolling:"touch" }}>
-          {datePills.map(({ ds, label }) => (
-            <button key={ds} onClick={() => setSelectedDate(ds)}
-              style={{
-                flexShrink:0, padding:"6px 12px", borderRadius:10, fontSize:12, fontWeight:500,
-                cursor:"pointer", transition:"all 0.2s ease", whiteSpace:"nowrap",
-                fontFamily:"'Inter', sans-serif",
-                background: selectedDate === ds ? P.nebula : P.glass,
-                color: selectedDate === ds ? "#fff" : P.soft,
-                border: selectedDate === ds ? `1px solid ${P.nebula}` : `1px solid ${P.glassBorder}`,
-              }}>
-              {label}
-            </button>
-          ))}
+        {/* Date selector button */}
+        <div style={{ position:"relative", marginBottom:20 }}>
+          <button onClick={() => setShowCal(!showCal)} style={{
+            display:"flex", alignItems:"center", gap:8, margin:"0 auto",
+            background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:10,
+            padding:"8px 16px", cursor:"pointer", color:P.text, fontSize:14,
+            fontFamily:"'Inter', sans-serif", fontWeight:500, transition:"all 0.2s ease",
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={P.nebula} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            {dateDisplay}
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={P.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+
+          {/* Calendar dropdown */}
+          {showCal && (
+            <div style={{
+              position:"absolute", top:"100%", left:"50%", transform:"translateX(-50%)",
+              marginTop:8, zIndex:100, width:280,
+              background:P.bg, border:`1px solid ${P.glassBorder}`, borderRadius:14,
+              padding:16, boxShadow:`0 12px 40px rgba(0,0,0,0.5)`,
+            }}>
+              {/* Month nav */}
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                <button onClick={() => { if (canPrevMonth()) { if (calMonth === 0) { setCalMonth(11); setCalYear(calYear - 1); } else setCalMonth(calMonth - 1); }}}
+                  style={{ background:"none", border:"none", color: canPrevMonth() ? P.text : P.dim, fontSize:18, cursor: canPrevMonth() ? "pointer" : "default", padding:"4px 8px" }}>‹</button>
+                <span style={{ color:P.text, fontSize:14, fontWeight:600, fontFamily:"'Inter', sans-serif" }}>
+                  {new Date(calYear, calMonth).toLocaleDateString("en-US", { month:"long", year:"numeric" })}
+                </span>
+                <button onClick={() => { if (canNextMonth()) { if (calMonth === 11) { setCalMonth(0); setCalYear(calYear + 1); } else setCalMonth(calMonth + 1); }}}
+                  style={{ background:"none", border:"none", color: canNextMonth() ? P.text : P.dim, fontSize:18, cursor: canNextMonth() ? "pointer" : "default", padding:"4px 8px" }}>›</button>
+              </div>
+              {/* Day headers */}
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2, marginBottom:4 }}>
+                {["Mo","Tu","We","Th","Fr","Sa","Su"].map(d => (
+                  <div key={d} style={{ textAlign:"center", fontSize:10, color:P.muted, fontWeight:600, padding:4 }}>{d}</div>
+                ))}
+              </div>
+              {/* Day cells */}
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2 }}>
+                {calCells.map((day, i) => {
+                  if (day === null) return <div key={`e${i}`} />;
+                  const ds = `${calYear}-${String(calMonth + 1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+                  const d = new Date(ds + "T12:00:00");
+                  const disabled = d > today || d < twoWeeksAgo;
+                  const isSelected = ds === selectedDate;
+                  const isTodayCell = ds === todayStr();
+                  return (
+                    <button key={ds} onClick={() => !disabled && handleCalSelect(day)}
+                      style={{
+                        width:34, height:34, borderRadius:"50%", border:"none",
+                        display:"flex", alignItems:"center", justifyContent:"center",
+                        fontSize:13, fontWeight: isSelected ? 700 : isTodayCell ? 600 : 400,
+                        fontFamily:"'Inter', sans-serif", cursor: disabled ? "default" : "pointer",
+                        transition:"all 0.15s ease",
+                        background: isSelected ? P.nebula : "transparent",
+                        color: disabled ? P.dim : isSelected ? "#fff" : isTodayCell ? P.nebula : P.text,
+                      }}>
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
+              <button onClick={() => setShowCal(false)} style={{
+                display:"block", margin:"12px auto 0", background:"none", border:"none",
+                color:P.nebula, fontSize:12, fontWeight:500, cursor:"pointer",
+              }}>Cancel</button>
+            </div>
+          )}
         </div>
 
         <div style={{ display:"flex", gap:10, justifyContent:"center", marginBottom:20, flexWrap:"wrap" }}>
@@ -443,12 +520,11 @@ function LogModal({ onClose, onLog, activities, allEntries }) {
         <div style={{ display:"flex", alignItems:"center", gap:10, justifyContent:"center", marginBottom:16 }}>
           <span style={{ color:P.soft, fontSize:14 }}>Duration</span>
           <input
-            type="number"
+            type="text"
             inputMode="numeric"
-            min="1"
-            max="300"
+            pattern="[0-9]*"
             value={duration}
-            onChange={e => setDuration(e.target.value)}
+            onChange={e => { const v = e.target.value.replace(/[^0-9]/g, ""); setDuration(v); }}
             style={{
               width:72, textAlign:"center", fontSize:18, fontWeight:600,
               background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:10,
