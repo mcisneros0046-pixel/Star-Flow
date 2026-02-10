@@ -610,6 +610,7 @@ function OnboardingWizard({ user, onComplete }) {
   const [fadeState, setFadeState] = useState("in"); // in | out
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
+  const [reviewStep, setReviewStep] = useState(0); // 0–6 for 7 post-assessment screens
 
   // AI-generated plan
   const [generatedActivities, setGeneratedActivities] = useState([]);
@@ -791,6 +792,7 @@ RULES FOR REWARDS (flat list of 6-8 items):
       setGeneratedTargets(parsed.targets || { ...DEFAULT_TARGETS });
       setGeneratedRewards(Array.isArray(parsed.rewards) ? parsed.rewards : [...DEFAULT_REWARDS]);
       setAiExplanation(parsed.explanation || "Your personalized plan is ready.");
+      setReviewStep(0);
       setPhase("review");
     } catch (err) {
       console.error("AI generation error:", err);
@@ -800,6 +802,7 @@ RULES FOR REWARDS (flat list of 6-8 items):
       setGeneratedTargets({ ...DEFAULT_TARGETS });
       setGeneratedRewards([...DEFAULT_REWARDS]);
       setAiExplanation("");
+      setReviewStep(0);
       setPhase("review");
     }
     setAiLoading(false);
@@ -839,10 +842,12 @@ RULES FOR REWARDS (flat list of 6-8 items):
     onComplete(userData);
   };
 
-  // Progress percentage
+  // Progress percentage — questions flow into review steps seamlessly
+  const totalReviewSteps = 7;
   const progress = phase === "welcome" ? 0
-    : phase === "questions" ? ((qIndex + 1) / totalQuestions) * 100
-    : 100;
+    : phase === "questions" ? ((qIndex + 1) / (totalQuestions + totalReviewSteps)) * 100
+    : phase === "generating" ? ((totalQuestions) / (totalQuestions + totalReviewSteps)) * 100
+    : ((totalQuestions + reviewStep + 1) / (totalQuestions + totalReviewSteps)) * 100;
 
   return (
     <div className="star-flow-app">
@@ -940,105 +945,194 @@ RULES FOR REWARDS (flat list of 6-8 items):
           </div>
         )}
 
-        {/* ── REVIEW ── */}
+        {/* ── POST-ASSESSMENT FLOW (7 screens) ── */}
         {phase === "review" && (
-          <div className="onboard-step onboard-fade-in">
-            <h2 className="onboard-title">Your Personalized Sky</h2>
-            {aiExplanation && (
-              <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", textAlign: "center", marginBottom: 24, fontSize: 14, lineHeight: 1.6 }}>
-                {aiExplanation}
-              </p>
-            )}
-            {aiError && (
-              <p style={{ color: "#FF9C8C", fontSize: 13, textAlign: "center", marginBottom: 16 }}>
-                {aiError} We used smart defaults instead.
-              </p>
+          <div className={`onboard-step onboard-fade-${fadeState}`} key={`review-${reviewStep}`}>
+
+            {/* SCREEN 1 — Arrival */}
+            {reviewStep === 0 && (
+              <div style={{ textAlign: "center", paddingTop: 40 }}>
+                <div className="onboard-glow" />
+                <h1 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 48, marginBottom: 16 }}>✦</h1>
+                <h2 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 28, fontWeight: 600, marginBottom: 20 }}>
+                  Your Sky Is Set
+                </h2>
+                {aiExplanation && (
+                  <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 15, lineHeight: 1.7, maxWidth: 340, margin: "0 auto 32px" }}>
+                    {aiExplanation}
+                  </p>
+                )}
+                {!aiExplanation && (
+                  <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 15, lineHeight: 1.7, maxWidth: 340, margin: "0 auto 32px" }}>
+                    This plan was shaped around you. You don't need to push here — consistency is what matters.
+                  </p>
+                )}
+                {aiError && (
+                  <p style={{ color: P.muted, fontSize: 12, marginBottom: 16 }}>
+                    {aiError} We used thoughtful defaults.
+                  </p>
+                )}
+                <button className="btn-primary btn-large" onClick={() => fadeTo(() => setReviewStep(1))}>
+                  Continue
+                </button>
+              </div>
             )}
 
-            {/* How Starlight Works */}
-            <h3 className="review-section-title">✦ How Starlight Works</h3>
-            <GlassCard className="section-card" style={{ marginBottom: 8 }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div>
-                  <p style={{ color: P.aurora, fontWeight: 600, fontSize: 13 }}>✦ Show Up</p>
-                  <p style={{ color: P.soft, fontSize: 12 }}>Any intentional movement earns 1 star when you meet the minimum time.</p>
+            {/* SCREEN 2 — Philosophy */}
+            {reviewStep === 1 && (
+              <div style={{ textAlign: "center", paddingTop: 48 }}>
+                <h2 style={{ color: P.text, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 24 }}>
+                  How Progress Works Here
+                </h2>
+                <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.8, maxWidth: 340, margin: "0 auto 40px" }}>
+                  Star Flow rewards showing up, not pushing harder. Small sessions still count. Returning after a pause matters most.
+                </p>
+                <button className="btn-primary btn-large" onClick={() => fadeTo(() => setReviewStep(2))}>
+                  That feels right
+                </button>
+              </div>
+            )}
+
+            {/* SCREEN 3 — Starlight, Gently Explained */}
+            {reviewStep === 2 && (
+              <div style={{ textAlign: "center", paddingTop: 48 }}>
+                <h2 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 32 }}>
+                  About Starlight
+                </h2>
+                <div style={{ textAlign: "left", maxWidth: 340, margin: "0 auto 24px" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 18 }}>
+                    <span style={{ color: P.aurora, fontSize: 14 }}>✦</span>
+                    <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.6 }}>
+                      Showing up creates starlight
+                    </p>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 18 }}>
+                    <span style={{ color: P.gold, fontSize: 14 }}>✦</span>
+                    <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.6 }}>
+                      Presence adds a little glow
+                    </p>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 18 }}>
+                    <span style={{ color: P.nebula, fontSize: 14 }}>✦</span>
+                    <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.6 }}>
+                      Coming back after a break shines brightest
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p style={{ color: P.gold, fontWeight: 600, fontSize: 13 }}>✦ Add Presence</p>
-                  <p style={{ color: P.soft, fontSize: 12 }}>Phone-free or fully focused adds a presence glow (+0.5 star, once per day).</p>
+                <p style={{ color: P.muted, fontSize: 12, fontStyle: "italic", maxWidth: 300, margin: "0 auto 36px", lineHeight: 1.6 }}>
+                  There are no daily limits. Some efforts simply shine more softly.
+                </p>
+                <button className="btn-primary btn-large" onClick={() => fadeTo(() => setReviewStep(3))}>
+                  Continue
+                </button>
+              </div>
+            )}
+
+            {/* SCREEN 4 — Movement Possibilities */}
+            {reviewStep === 3 && (
+              <div style={{ textAlign: "center", paddingTop: 48 }}>
+                <h2 style={{ color: P.text, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 12 }}>
+                  Ways You Might Move
+                </h2>
+                <p style={{ color: P.muted, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 14, marginBottom: 28 }}>
+                  These are invitations, not requirements.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 320, margin: "0 auto 36px" }}>
+                  {generatedActivities.map(act => (
+                    <div key={act.id} style={{
+                      background: act.colorLight || P.glass,
+                      border: `1px solid color-mix(in srgb, ${act.color} 25%, transparent)`,
+                      borderRadius: 16, padding: "14px 18px",
+                      display: "flex", alignItems: "center", gap: 10,
+                    }}>
+                      <span style={{ color: act.color, fontSize: 16 }}>✦</span>
+                      <span style={{ color: P.text, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 17, fontWeight: 500 }}>
+                        {act.label}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-                <div>
-                  <p style={{ color: P.nebula, fontWeight: 600, fontSize: 13 }}>✦ Return Light</p>
-                  <p style={{ color: P.soft, fontSize: 12 }}>Coming back after a pause makes your next star shine brighter.</p>
+                <button className="btn-primary btn-large" onClick={() => fadeTo(() => setReviewStep(4))}>
+                  Continue
+                </button>
+              </div>
+            )}
+
+            {/* SCREEN 5 — Your First Week (Abstract) */}
+            {reviewStep === 4 && (
+              <div style={{ textAlign: "center", paddingTop: 48 }}>
+                <h2 style={{ color: P.text, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 24 }}>
+                  This Week's Focus
+                </h2>
+                <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.8, maxWidth: 320, margin: "0 auto 20px" }}>
+                  A few intentional moments this week are more than enough. Your constellation grows through gentle consistency.
+                </p>
+                <p style={{ color: P.muted, fontSize: 12, fontStyle: "italic", maxWidth: 300, margin: "0 auto 40px" }}>
+                  You'll see your progress take shape over time.
+                </p>
+                <button className="btn-primary btn-large" onClick={() => fadeTo(() => setReviewStep(5))}>
+                  I'm ready
+                </button>
+              </div>
+            )}
+
+            {/* SCREEN 6 — Rewards (Reframed) */}
+            {reviewStep === 5 && (
+              <div style={{ textAlign: "center", paddingTop: 48 }}>
+                <h2 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 24 }}>
+                  Little Things to Look Forward To
+                </h2>
+                <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.8, maxWidth: 340, margin: "0 auto 28px" }}>
+                  When your constellation brightens, you'll unlock small rewards you choose for yourself. You don't need to decide now.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 280, margin: "0 auto 36px" }}>
+                  {generatedRewards.slice(0, 2).map((rw, i) => (
+                    <div key={i} style={{
+                      background: P.glass, border: `1px solid ${P.glassBorder}`,
+                      borderRadius: 14, padding: "12px 16px",
+                      display: "flex", alignItems: "center", gap: 8,
+                    }}>
+                      <span style={{ color: P.gold, fontSize: 12 }}>✦</span>
+                      <span style={{ color: P.soft, fontSize: 14, fontFamily: "'Cormorant Garamond', Georgia, serif" }}>{rw}</span>
+                    </div>
+                  ))}
                 </div>
-                <p style={{ color: P.muted, fontSize: 11, fontStyle: "italic", marginTop: 4 }}>
-                  Soft pacing: first efforts each day shine brightest. More sessions still count with gentler glow.
+                <button className="btn-primary btn-large" onClick={() => fadeTo(() => setReviewStep(6))}>
+                  Continue
+                </button>
+              </div>
+            )}
+
+            {/* SCREEN 7 — Day One Invitation */}
+            {reviewStep === 6 && (
+              <div style={{ textAlign: "center", paddingTop: 60 }}>
+                <div className="onboard-glow" />
+                <h1 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 48, marginBottom: 16 }}>✦</h1>
+                <h2 style={{ color: P.text, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 28, fontWeight: 600, marginBottom: 24 }}>
+                  Day One
+                </h2>
+                <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.8, maxWidth: 320, margin: "0 auto 40px" }}>
+                  Today can be simple. A short walk, a stretch, or even just noticing your body counts.
+                </p>
+                <button className="btn-primary btn-large" onClick={handleLaunch}>
+                  Begin gently
+                </button>
+                <p style={{ marginTop: 20 }}>
+                  <button className="btn-ghost" onClick={handleLaunch}
+                    style={{ fontSize: 13, color: P.dim }}>
+                    I'll start later
+                  </button>
                 </p>
               </div>
-            </GlassCard>
+            )}
 
-            {/* Activities & Minimum Durations */}
-            <h3 className="review-section-title" style={{ marginTop: 16 }}>☽ Your Activities</h3>
-            {generatedActivities.map(act => (
-              <GlassCard key={act.id} className="section-card" style={{ marginBottom: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <h4 style={{ color: act.color, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 17 }}>
-                    ✦ {act.label}
-                  </h4>
-                  <span style={{ color: P.soft, fontSize: 13 }}>{act.minDuration}+ min</span>
-                </div>
-              </GlassCard>
-            ))}
-
-            {/* Constellation Goal */}
-            <h3 className="review-section-title" style={{ marginTop: 16 }}>✦ Constellation Goal</h3>
-            <GlassCard className="section-card">
-              <div className="review-targets">
-                <div className="review-target-row">
-                  <span style={{ color: P.soft }}>Weekly goal</span>
-                  <span style={{ color: P.gold, fontWeight: 600 }}>{generatedTargets.weeklyStarTarget} stars</span>
-                </div>
-                <div className="review-target-row">
-                  <span style={{ color: P.soft }}>Sessions per week</span>
-                  <span style={{ color: P.text }}>{generatedTargets.targetSessionsPerWeek}×</span>
-                </div>
-                <div className="divider" />
-                <div className="review-target-row">
-                  <span style={{ color: P.soft }}>Monthly target</span>
-                  <span style={{ color: P.nebula, fontWeight: 600 }}>{generatedTargets.monthlyTarget} stars</span>
-                </div>
-                <div className="review-target-row">
-                  <span style={{ color: P.soft }}>Stretch goal</span>
-                  <span style={{ color: P.gold, fontWeight: 600 }}>{generatedTargets.monthlyStretch} stars</span>
-                </div>
+            {/* Back navigation (screens 1–6) */}
+            {reviewStep > 0 && reviewStep < 6 && (
+              <div style={{ textAlign: "center", marginTop: 16 }}>
+                <button className="btn-ghost" onClick={() => fadeTo(() => setReviewStep(s => s - 1))}
+                  style={{ fontSize: 13, color: P.dim }}>Back</button>
               </div>
-            </GlassCard>
-
-            {/* Rewards (flat list) */}
-            <h3 className="review-section-title" style={{ marginTop: 16 }}>★ Your Rewards</h3>
-            <GlassCard className="section-card" style={{ marginBottom: 8 }}>
-              <p style={{ color: P.soft, fontSize: 12, marginBottom: 10 }}>
-                When you reach your weekly constellation goal, choose one:
-              </p>
-              {generatedRewards.map((rw, idx) => (
-                <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 5, alignItems: "center" }}>
-                  <input type="text" value={rw} onChange={e => updateReward(idx, e.target.value)}
-                    className="onboard-input" style={{ flex: 1, fontSize: 12, padding: "7px 11px" }} />
-                  <button onClick={() => removeReward(idx)}
-                    style={{ color: P.muted, fontSize: 16, background: "none", border: "none", cursor: "pointer", padding: "0 4px" }}>×</button>
-                </div>
-              ))}
-              <button className="btn-ghost" onClick={() => addReward()}
-                style={{ fontSize: 11, color: P.gold, padding: "2px 0" }}>+ Add reward</button>
-            </GlassCard>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 24, alignItems: "center" }}>
-              <button className="btn-primary btn-large" onClick={handleLaunch}>✦ Launch Your Sky</button>
-              <button className="btn-ghost" onClick={() => {
-                setPhase("questions");
-                setQIndex(totalQuestions - 1);
-              }} style={{ fontSize: 13 }}>← Back to questions</button>
-            </div>
+            )}
           </div>
         )}
 
