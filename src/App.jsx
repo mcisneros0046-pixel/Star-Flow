@@ -431,7 +431,7 @@ function LogModal({ onClose, onLog, activities, allEntries }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={e => e.stopPropagation()}>
         <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:26, fontWeight:600, marginBottom:24 }}>
-          Add Star
+          Add a Moment
         </h2>
 
         {/* Date selector button */}
@@ -1758,7 +1758,7 @@ export default function StarFlow() {
   const [encouragement] = useState(() => ENCOURAGEMENTS[Math.floor(Math.random() * ENCOURAGEMENTS.length)]);
   const [showGuide, setShowGuide] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [activeView, setActiveView] = useState("now"); // now | flow | checkin
+  const [activeView, setActiveView] = useState("now"); // now | constellation | checkin
   const [devTaps, setDevTaps] = useState(0);
   const [showDev, setShowDev] = useState(false);
   const devTimer = useRef(null);
@@ -2024,6 +2024,18 @@ export default function StarFlow() {
   const curWeekKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-W${cw}`;
   const curPromise = promises[curWeekKey] || "";
 
+  // Week minutes + active days for movement signals
+  const [weekStart] = weekRange(now.getFullYear(), now.getMonth() + 1, cw);
+  let weekMinutes = 0, weekActiveDays = 0;
+  const wCur = new Date(weekStart);
+  const [, weekEnd] = weekRange(now.getFullYear(), now.getMonth() + 1, cw);
+  while (wCur <= weekEnd && wCur <= now) {
+    const ds = wCur.toISOString().slice(0, 10);
+    const dayEntries = entriesFor(entries, ds);
+    if (dayEntries.length > 0) { weekActiveDays++; weekMinutes += dayEntries.reduce((s, e) => s + (e.duration_min || 0), 0); }
+    wCur.setDate(wCur.getDate() + 1);
+  }
+
   let milestone = "";
   if (stats.stretch) milestone = MILESTONE_COPY.monthly_stretch;
   else if (stats.target) milestone = MILESTONE_COPY.monthly_target;
@@ -2107,8 +2119,27 @@ export default function StarFlow() {
           <button className="btn-primary btn-large" onClick={() => setShowLog(true)}>✦ Add a Moment</button>
         </div>
 
+        {/* Week movement summary — unmistakable practice signal */}
+        <div style={{
+          display:"flex", justifyContent:"center", gap:24, marginTop:20, marginBottom:8,
+          padding:"14px 0", borderTop:`1px solid ${P.dim}`, borderBottom:`1px solid ${P.dim}`,
+        }}>
+          <div style={{ textAlign:"center" }}>
+            <span style={{ color:P.gold, fontSize:22, fontWeight:700, fontFamily:"'Cormorant Garamond', Georgia, serif" }}>{weekMinutes}</span>
+            <p style={{ color:P.muted, fontSize:10, marginTop:2 }}>min this week</p>
+          </div>
+          <div style={{ textAlign:"center" }}>
+            <span style={{ color:P.nebula, fontSize:22, fontWeight:700, fontFamily:"'Cormorant Garamond', Georgia, serif" }}>{weekActiveDays}</span>
+            <p style={{ color:P.muted, fontSize:10, marginTop:2 }}>active days</p>
+          </div>
+          <div style={{ textAlign:"center" }}>
+            <span style={{ color:streak > 0 ? P.gold : P.dim, fontSize:22, fontWeight:700, fontFamily:"'Cormorant Garamond', Georgia, serif" }}>{streak}</span>
+            <p style={{ color:P.muted, fontSize:10, marginTop:2 }}>day streak</p>
+          </div>
+        </div>
+
         {todayEntries.length > 0 && (
-          <GlassCard className="section-card" style={{ marginTop:24 }}>
+          <GlassCard className="section-card" style={{ marginTop:16 }}>
             {todayEntries.map((entry, i) => {
               const act = activities.find(a => a.id === entry.activity_type);
               const result = scoreSession(entry, activities, entries);
@@ -2151,9 +2182,15 @@ export default function StarFlow() {
         )}
       </>)}
 
-      {/* ══════════ FLOW VIEW (calendar) ══════════ */}
-      {activeView === "flow" && (<>
-        <GlassCard className="section-card" style={{ marginTop:8 }}>
+      {/* ══════════ CONSTELLATION VIEW (practice map) ══════════ */}
+      {activeView === "constellation" && (<>
+        <div style={{ textAlign:"center", marginTop:8, marginBottom:16 }}>
+          <h3 style={{ color:P.text, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:20, fontWeight:600 }}>
+            {new Date(viewYear, viewMonth-1).toLocaleDateString("en-US", { month:"long" })} Constellation
+          </h3>
+          <p style={{ color:P.muted, fontSize:11, marginTop:4 }}>Your movement and mindfulness practice over time</p>
+        </div>
+        <GlassCard className="section-card">
           <div className="cal-nav">
             <button className="cal-arrow" onClick={prevMonth}>‹</button>
             <span className="cal-title">{new Date(viewYear, viewMonth-1).toLocaleDateString("en-US", { month:"long", year:"numeric" })}</span>
@@ -2168,19 +2205,19 @@ export default function StarFlow() {
               const hasAct = es.length > 0;
               const isToday = isCurrentMonth && day === now.getDate();
               const dp = dailyStars(entries, ds, activities);
-              const dotCounts = {};
+              const starCounts = {};
               activities.forEach(act => {
                 const count = es.filter(e => e.activity_type === act.id).length;
-                if (count > 0) dotCounts[act.id] = Math.min(count, 2);
+                if (count > 0) starCounts[act.id] = Math.min(count, 2);
               });
               return (
                 <div key={ds} className={`cal-cell ${isToday?"today":""} ${hasAct?"active":""}`}>
                   <span className="cal-day">{day}</span>
-                  {Object.keys(dotCounts).length > 0 && (
+                  {Object.keys(starCounts).length > 0 && (
                     <div className="cal-dots">
                       {activities.map(act =>
-                        Array.from({ length: dotCounts[act.id] || 0 }, (_, j) => (
-                          <span key={`${act.id}${j}`} className="dot" style={{ background: act.color }} />
+                        Array.from({ length: starCounts[act.id] || 0 }, (_, j) => (
+                          <span key={`${act.id}${j}`} className="cal-star" style={{ color: act.color }}>✦</span>
                         ))
                       )}
                     </div>
@@ -2192,20 +2229,20 @@ export default function StarFlow() {
           </div>
           <div className="cal-legend">
             {activities.map(act => (
-              <span key={act.id}><span className="dot" style={{ background: act.color }} /> {act.label}</span>
+              <span key={act.id}><span className="cal-star" style={{ color: act.color }}>✦</span> {act.label}</span>
             ))}
           </div>
           <p style={{ textAlign:"center", color:P.soft, fontSize:12, marginTop:4, paddingBottom:10 }}>
             {activities.map(act => {
               const count = stats.actCounts[act.id] || 0;
               const mindful = stats.mindfulCounts?.[act.id] || 0;
-              return `${count} ${act.label.toLowerCase()}${mindful ? ` (${mindful}✦)` : ""}`;
+              return `${count} ${act.label.toLowerCase()} session${count !== 1 ? "s" : ""}${mindful ? ` (${mindful} mindful)` : ""}`;
             }).join(" · ")}
           </p>
         </GlassCard>
         <div style={{ textAlign:"center", marginTop:16 }}>
           <p style={{ color:P.soft, fontSize:13 }}>
-            <span style={{ color:P.gold, fontWeight:600 }}>{stats.pts}</span> stars this month
+            <span style={{ color:P.gold, fontWeight:600 }}>{stats.pts}</span> stars · <span style={{ color:P.text }}>{Math.round(entries.filter(e => { const ds = e.date; return ds.startsWith(`${viewYear}-${String(viewMonth).padStart(2,"0")}`); }).reduce((s, e) => s + (e.duration_min || 0), 0))}</span> total minutes this month
             {stats.target && <span style={{ color:P.nebula }}> · Monthly goal reached</span>}
             {stats.stretch && <span style={{ color:P.gold }}> · Stretch goal reached</span>}
           </p>
@@ -2220,7 +2257,7 @@ export default function StarFlow() {
             <span className="card-pts" style={{ color:P.nebula }}>{wp} / {targets.weeklyStarTarget}</span>
           </div>
           {streak > 0
-            ? <p style={{ color:P.gold, fontSize:13, marginBottom:6 }}>✦ {streak}-night glow</p>
+            ? <p style={{ color:P.gold, fontSize:13, marginBottom:6 }}>✦ {streak}-day streak</p>
             : <p style={{ color:P.soft, fontSize:13, marginBottom:6 }}>Every star counts, even small ones.</p>}
           {curPromise && (
             <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontStyle:"italic", fontSize:13, marginBottom:8, lineHeight:1.5 }}>
@@ -2327,7 +2364,7 @@ export default function StarFlow() {
       <div style={{ display:"flex", justifyContent:"center", gap:4, maxWidth:480, margin:"0 auto" }}>
         {[
           { id:"now", label:"Now", icon:"✦" },
-          { id:"flow", label:"Flow", icon:"☽" },
+          { id:"constellation", label:"Practice", icon:"☽" },
           { id:"checkin", label:"Check-in", icon:"⟡" },
         ].map(tab => (
           <button key={tab.id} onClick={() => setActiveView(tab.id)}
@@ -2536,10 +2573,11 @@ const STYLES = `
 .cal-cell.today .cal-day,.cal-cell.active .cal-day{color:${P.text};font-weight:600;}
 .cal-dots{display:flex;gap:2px;margin-top:auto;}
 .dot{width:6px;height:6px;border-radius:50%;display:inline-block;}
+.cal-star{font-size:6px;line-height:1;display:inline-block;}
 .cal-pts{position:absolute;top:3px;right:5px;font-size:8px;color:${P.soft};}
 .cal-legend{display:flex;justify-content:center;gap:16px;padding:8px 0 4px;font-size:11px;color:${P.soft};flex-wrap:wrap;}
 .cal-legend span{display:flex;align-items:center;gap:4px;}
-.cal-legend .dot{width:8px;height:8px;}
+.cal-legend .cal-star{font-size:10px;}
 
 /* ── Modals ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(8,9,18,0.85);backdrop-filter:blur(4px);z-index:100;display:flex;align-items:center;justify-content:center;animation:fade-in 0.2s ease;}
