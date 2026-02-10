@@ -151,73 +151,76 @@ async function saveUserData(userId, data) {
 }
 
 // ─── SCORING ENGINE ──────────────────────────────────────────────────────────
-// 1 base star per session meeting minimum duration.
-// Presence bonus: +0.5 if mindful (max 1 per day).
-// Reentry multiplier: returning after missed days.
-// Diminishing returns: first efforts each day shine brightest (replaces daily cap).
+// RULE: Any activity worth logging ALWAYS earns at least 1 full star.
+// Bonuses are purely additive — they can never reduce the base star.
+// Diminishing returns apply only to bonuses for 2nd+ sessions per day.
 
-const REENTRY_TABLE = { 0: 1.0, 1: 1.2, 2: 1.35 }; // 3+ → 1.5
-const PACING_TABLE = { 1: 1.0, 2: 0.7, 3: 0.5 };   // 4+ → 0.35
+// Return-light bonus (additive): coming back after missed days
+const RETURN_BONUS = { 0: 0, 1: 0.5, 2: 0.75 }; // 3+ → 1.0
 
-function reentryMultiplier(missed) { return REENTRY_TABLE[missed] ?? 1.5; }
-function pacingMultiplier(idx) { return PACING_TABLE[idx] ?? 0.35; }
+function returnBonus(missed) { return RETURN_BONUS[missed] ?? 1.0; }
+
+// Pacing: only reduces bonuses, never the base star
+const BONUS_PACING = { 1: 1.0, 2: 0.7, 3: 0.5 }; // 4+ → 0.35
+function bonusPacing(idx) { return BONUS_PACING[idx] ?? 0.35; }
 
 const SESSION_MESSAGES = {
-  reentry: ["Welcome back — the sky remembers you.", "Return light. This counts double.", "The stars waited for you."],
+  reentry: ["Welcome back — the sky remembers you.", "Return light. The stars waited.", "The sky opens wider for your return."],
   presence: ["Presence noted. The glow deepens.", "A mindful moment — rarer than gold.", "Phone down, sky up. Beautiful."],
   base: ["A star placed. Quietly luminous.", "The sky grows.", "One more light in your constellation."],
 };
 
 function scoreSession(entry, activities, allEntries) {
-  const act = activities.find(a => a.id === entry.activity_type);
-  const empty = { starsEarned: 0, baseStar: 0, presenceBonus: 0, reentryMult: 1, pacingMult: 1, message: "" };
-  if (!act || entry.duration_min < act.minDuration) return empty;
-
+  // ALWAYS at least 1 star — any logged activity counts
   const baseStar = 1;
+
+  // Presence bonus: +0.5 if mindful (max once per day)
   let presenceBonus = 0;
   if (entry.mindful) {
     const otherMindful = allEntries.filter(e =>
-      e.date === entry.date && e !== entry && e.mindful &&
-      e.duration_min >= (activities.find(a => a.id === e.activity_type)?.minDuration || 999)
+      e.date === entry.date && e !== entry && e.mindful
     );
     if (otherMindful.length === 0) presenceBonus = 0.5;
   }
 
+  // Return-light bonus: +0.5 to +1.0 based on missed days (additive, not multiplier)
+  const missedDays = calcMissedDays(entry.date, allEntries);
+  const returnBonusVal = returnBonus(missedDays);
+
+  // Session pacing: reduces bonuses only, never the base star
   const todayBefore = allEntries.filter(e =>
-    e.date === entry.date && allEntries.indexOf(e) < allEntries.indexOf(entry) &&
-    e.duration_min >= (activities.find(a => a.id === e.activity_type)?.minDuration || 999)
+    e.date === entry.date && allEntries.indexOf(e) < allEntries.indexOf(entry)
   );
   const sessionIndex = todayBefore.length + 1;
-  const missedDays = calcMissedDays(entry.date, allEntries, activities);
-  const reentryMult = reentryMultiplier(missedDays);
-  const pacingMult = pacingMultiplier(sessionIndex);
-  const starsEarned = Math.round((baseStar + presenceBonus) * reentryMult * pacingMult * 100) / 100;
+  const pacing = bonusPacing(sessionIndex);
+
+  // Final: base always full + bonuses scaled by pacing
+  const totalBonuses = (presenceBonus + returnBonusVal) * pacing;
+  const starsEarned = Math.round((baseStar + totalBonuses) * 100) / 100;
 
   let msgPool = SESSION_MESSAGES.base;
   if (missedDays >= 1) msgPool = SESSION_MESSAGES.reentry;
   else if (presenceBonus > 0) msgPool = SESSION_MESSAGES.presence;
   const message = msgPool[Math.floor(Math.random() * msgPool.length)];
 
-  return { starsEarned, baseStar, presenceBonus, reentryMult, pacingMult, message };
+  return { starsEarned, baseStar, presenceBonus, returnBonus: returnBonusVal, pacing, message };
 }
 
-function calcMissedDays(dateStr, allEntries, activities) {
+function calcMissedDays(dateStr, allEntries) {
   const d = new Date(dateStr);
   let missed = 0;
   for (let i = 1; i <= 14; i++) {
     const prev = new Date(d); prev.setDate(prev.getDate() - i);
     const prevStr = prev.toISOString().slice(0, 10);
-    if (allEntries.some(e => e.date === prevStr && e.duration_min >= (activities.find(a => a.id === e.activity_type)?.minDuration || 999))) break;
+    if (allEntries.some(e => e.date === prevStr)) break;
     missed++;
   }
   return missed;
 }
 
-// Simplified check: did this entry meet minimum duration?
-function calcPts(entry, activities) {
-  const act = activities.find(a => a.id === entry.activity_type);
-  if (!act || entry.duration_min < act.minDuration) return 0;
-  return 1;
+// Every logged entry earns stars — no zero states
+function calcPts(entry) {
+  return 1; // always counts
 }
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -258,7 +261,7 @@ function monthStats(entries, y, m, activities, targets) {
     const ds = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     pts += dailyStars(entries, ds, activities);
     entriesFor(entries, ds).forEach(e => {
-      if (calcPts(e, activities) > 0) {
+      if (calcPts(e) > 0) {
         actCounts[e.activity_type] = (actCounts[e.activity_type] || 0) + 1;
         if (e.mindful) mindfulCounts[e.activity_type] = (mindfulCounts[e.activity_type] || 0) + 1;
       }
@@ -269,7 +272,7 @@ function monthStats(entries, y, m, activities, targets) {
 }
 
 function calcStreak(entries, activities) {
-  const active = new Set(entries.filter(e => calcPts(e, activities) > 0).map(e => e.date));
+  const active = new Set(entries.filter(e => calcPts(e) > 0).map(e => e.date));
   if (!active.size) return 0;
   let streak = 0, d = new Date();
   while (active.has(d.toISOString().slice(0, 10))) { streak++; d.setDate(d.getDate() - 1); }
@@ -411,7 +414,7 @@ function LogModal({ onClose, onLog, activities, allEntries }) {
         <div style={{ display:"flex", alignItems:"center", gap:10, justifyContent:"center", marginBottom:16 }}>
           <span style={{ color:P.soft, fontSize:14 }}>Duration</span>
           <select value={duration} onChange={e => setDuration(Number(e.target.value))} className="duration-select">
-            {[10,15,20,25,30,35,40,45,50,60,75,90,120].map(v => <option key={v} value={v}>{v}</option>)}
+            {[5,10,15,20,25,30,35,40,45,50,60,75,90,120].map(v => <option key={v} value={v}>{v}</option>)}
           </select>
           <span style={{ color:P.muted, fontSize:14 }}>min</span>
         </div>
@@ -423,16 +426,9 @@ function LogModal({ onClose, onLog, activities, allEntries }) {
         <p style={{ color:P.gold, fontSize:16, fontWeight:600, textAlign:"center", margin:"16px 0" }}>
           → +{preview.starsEarned} star{preview.starsEarned !== 1 ? "s" : ""}
         </p>
-        {act && duration < act.minDuration && (
-          <p style={{ color:P.muted, fontSize:11, textAlign:"center", marginBottom:8 }}>
-            {act.label} needs {act.minDuration}+ min to earn a star
-          </p>
-        )}
-        {preview.starsEarned > 0 && (
-          <p style={{ color:P.soft, fontSize:11, textAlign:"center", fontStyle:"italic", marginBottom:8 }}>
-            {preview.message}
-          </p>
-        )}
+        <p style={{ color:P.soft, fontSize:11, textAlign:"center", fontStyle:"italic", marginBottom:8 }}>
+          {preview.message}
+        </p>
         <div style={{ display:"flex", gap:12, justifyContent:"center", marginTop:20 }}>
           <button className="btn-primary" onClick={handleLog}>✦ Place This Star</button>
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
@@ -788,11 +784,12 @@ CRITICAL GUIDELINES BASED ON THEIR ANSWERS:
 - Tracking comfort "${answers.tracking_comfort || ""}" → simpler setup for minimal trackers
 
 THE SCORING MODEL (do NOT change this, it is built into the app):
-- Each session earns exactly 1 base star if it meets the activity's minDuration
-- Presence bonus: +0.5 star if the session is mindful/phone-free (max 1 per day)
-- Reentry bonus: multiplier for returning after missed days (1.2x after 1 day, 1.5x after 3+)
-- Pacing: diminishing returns for multiple sessions per day (no daily cap)
+- Every logged session ALWAYS earns at least 1 full star — no minimums, no zero states
+- Presence bonus: +0.5 star if the session is mindful/phone-free (additive, max 1 per day)
+- Return-light bonus: +0.5 to +1.0 for coming back after missed days (additive)
+- Pacing: diminishing returns on BONUSES only for 2nd+ sessions per day — base star is always full
 - There are NO tiers (no bronze/silver/gold). Just a single weekly constellation goal.
+- minDuration is a suggested session length, NOT a minimum to earn stars.
 
 Respond with ONLY a JSON object (no markdown, no backticks, no explanation outside JSON):
 {
@@ -1582,6 +1579,7 @@ export default function StarFlow() {
   const [encouragement] = useState(() => ENCOURAGEMENTS[Math.floor(Math.random() * ENCOURAGEMENTS.length)]);
   const [showGuide, setShowGuide] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [activeView, setActiveView] = useState("tonight"); // tonight | flow | checkin
   const [devTaps, setDevTaps] = useState(0);
   const [showDev, setShowDev] = useState(false);
   const devTimer = useRef(null);
@@ -1919,77 +1917,20 @@ export default function StarFlow() {
         </div>
       )}
 
-      {/* ── Progress Ring ── */}
-      <ProgressRing current={stats.pts} target={targets.monthlyTarget} stretch={targets.monthlyStretch} />
-      <p className="encouragement">{encouragement}</p>
-      <div style={{ textAlign:"center", marginBottom:28 }}>
-        <button className="btn-primary btn-large" onClick={() => setShowLog(true)}>✦ Add a Moment</button>
-      </div>
 
-      {/* ── Calendar ── */}
-      <GlassCard className="section-card">
-        <div className="cal-nav">
-          <button className="cal-arrow" onClick={prevMonth}>‹</button>
-          <span className="cal-title">{new Date(viewYear, viewMonth-1).toLocaleDateString("en-US", { month:"long", year:"numeric" })}</span>
-          <button className="cal-arrow" onClick={nextMonth}>›</button>
+      {/* ══════════ TONIGHT VIEW (default home — reflective only) ══════════ */}
+      {activeView === "tonight" && (<>
+        <div style={{ textAlign:"center", paddingTop:16, paddingBottom:8 }}>
+          <p style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:20, fontWeight:500, marginBottom:6 }}>
+            {todayEntries.length === 0 ? "The sky is quiet tonight." : `${todayStarsVal} star${todayStarsVal !== 1 ? "s" : ""} in tonight's sky.`}
+          </p>
+          <p className="encouragement" style={{ marginBottom:24 }}>{encouragement}</p>
+          <button className="btn-primary btn-large" onClick={() => setShowLog(true)}>✦ Add a Moment</button>
         </div>
-        <div className="cal-grid">
-          {["Mo","Tu","We","Th","Fr","Sa","Su"].map(d => <div key={d} className="cal-dayname">{d}</div>)}
-          {calendarWeeks(viewYear, viewMonth).flat().map((day, i) => {
-            if (day === 0) return <div key={`e${i}`} className="cal-cell empty" />;
-            const ds = `${viewYear}-${String(viewMonth).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-            const es = entriesFor(entries, ds);
-            const hasAct = es.some(e => calcPts(e, activities) > 0);
-            const isToday = isCurrentMonth && day === now.getDate();
-            const dp = dailyStars(entries, ds, activities);
 
-            // Build dots dynamically from user's activities
-            const dotCounts = {};
-            activities.forEach(act => {
-              const count = es.filter(e => e.activity_type === act.id && calcPts(e, activities) > 0).length;
-              if (count > 0) dotCounts[act.id] = Math.min(count, 2);
-            });
-
-            return (
-              <div key={ds} className={`cal-cell ${isToday?"today":""} ${hasAct?"active":""}`}>
-                <span className="cal-day">{day}</span>
-                {Object.keys(dotCounts).length > 0 && (
-                  <div className="cal-dots">
-                    {activities.map(act =>
-                      Array.from({ length: dotCounts[act.id] || 0 }, (_, j) => (
-                        <span key={`${act.id}${j}`} className="dot" style={{ background: act.color }} />
-                      ))
-                    )}
-                  </div>
-                )}
-                {dp > 0 && <span className="cal-pts">{dp}</span>}
-              </div>
-            );
-          })}
-        </div>
-        <div className="cal-legend">
-          {activities.map(act => (
-            <span key={act.id}><span className="dot" style={{ background: act.color }} /> {act.label}</span>
-          ))}
-        </div>
-        <p style={{ textAlign:"center", color:P.soft, fontSize:12, marginTop:4, paddingBottom:10 }}>
-          {activities.map(act => {
-            const count = stats.actCounts[act.id] || 0;
-            const mindful = stats.mindfulCounts?.[act.id] || 0;
-            return `${count} ${act.label.toLowerCase()}${mindful ? ` (${mindful}✦)` : ""}`;
-          }).join(" · ")}
-        </p>
-      </GlassCard>
-
-      {/* ── Tonight ── */}
-      <GlassCard className="section-card">
-        <div className="card-header">
-          <h3 className="card-title">Tonight</h3>
-          <span className="card-pts" style={{ color:P.gold }}>{todayStarsVal} stars</span>
-        </div>
-        {todayEntries.length === 0
-          ? <p className="empty-state">The sky is quiet tonight. Your first star is waiting.</p>
-          : todayEntries.map((entry, i) => {
+        {todayEntries.length > 0 && (
+          <GlassCard className="section-card" style={{ marginTop:24 }}>
+            {todayEntries.map((entry, i) => {
               const act = activities.find(a => a.id === entry.activity_type);
               const result = scoreSession(entry, activities, entries);
               const accent = act?.color || P.nebula;
@@ -2007,134 +1948,230 @@ export default function StarFlow() {
                   </div>
                 </div>
               );
-            })
-        }
-      </GlassCard>
+            })}
+          </GlassCard>
+        )}
 
-      {/* ── Week ── */}
-      <GlassCard className="section-card">
-        <div className="card-header">
-          <h3 className="card-title">Week {cw}</h3>
-          <span className="card-pts" style={{ color:P.nebula }}>{wp} / {targets.weeklyStarTarget}</span>
-        </div>
-        {streak > 0
-          ? <p style={{ color:P.gold, fontSize:13, marginBottom:6 }}>✦ {streak}-night glow</p>
-          : <p style={{ color:P.soft, fontSize:13, marginBottom:6 }}>Every star counts, even small ones.</p>}
+        {todayEntries.length > 0 && (
+          <div style={{ textAlign:"center", marginTop:24 }}>
+            <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontStyle:"italic", fontSize:14, lineHeight:1.7 }}>
+              {streak > 1
+                ? `${streak} nights in a row. The sky notices.`
+                : "You showed up tonight. That's enough."}
+            </p>
+          </div>
+        )}
+
         {curPromise && (
-          <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontStyle:"italic", fontSize:13, marginBottom:8, lineHeight:1.5 }}>
-            This week: "{curPromise}"
-          </p>
+          <div style={{ textAlign:"center", marginTop:20 }}>
+            <p style={{ color:P.muted, fontSize:11, marginBottom:4 }}>This week's intention:</p>
+            <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontStyle:"italic", fontSize:14 }}>
+              "{curPromise}"
+            </p>
+          </div>
         )}
-        {!curPromise && !claimed.includes(curWeekKey) && (
-          <button className="btn-ghost" style={{ fontSize:12, color:P.nebula, padding:"2px 0", marginBottom:8 }}
-            onClick={() => setPromiseModal({ wk: cw, rk: curWeekKey })}>
-            ✦ Set a weekly intention
-          </button>
-        )}
-        {milestone && <p className="milestone">{milestone}</p>}
-        <div className="divider" />
-        <p style={{ color:P.soft, fontSize:12, fontWeight:600, marginBottom:8 }}>Constellation Goal</p>
-        <ConstellationBar pts={wp} target={targets.weeklyStarTarget} />
-        <p style={{ color:P.soft, fontSize:12, marginTop:12 }}>
-          {goalHit ? `✦ ${peekText}` : `☽ ${peekText}`}
-        </p>
-      </GlassCard>
+      </>)}
 
-      {/* ── Weekly Sky ── */}
-      <div className="section-header">
-        <h3 style={{ color:P.text, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:18 }}>Weekly Sky</h3>
-      </div>
-      <div className="week-pills">
+      {/* ══════════ FLOW VIEW (calendar) ══════════ */}
+      {activeView === "flow" && (<>
+        <GlassCard className="section-card" style={{ marginTop:8 }}>
+          <div className="cal-nav">
+            <button className="cal-arrow" onClick={prevMonth}>‹</button>
+            <span className="cal-title">{new Date(viewYear, viewMonth-1).toLocaleDateString("en-US", { month:"long", year:"numeric" })}</span>
+            <button className="cal-arrow" onClick={nextMonth}>›</button>
+          </div>
+          <div className="cal-grid">
+            {["Mo","Tu","We","Th","Fr","Sa","Su"].map(d => <div key={d} className="cal-dayname">{d}</div>)}
+            {calendarWeeks(viewYear, viewMonth).flat().map((day, i) => {
+              if (day === 0) return <div key={`e${i}`} className="cal-cell empty" />;
+              const ds = `${viewYear}-${String(viewMonth).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+              const es = entriesFor(entries, ds);
+              const hasAct = es.length > 0;
+              const isToday = isCurrentMonth && day === now.getDate();
+              const dp = dailyStars(entries, ds, activities);
+              const dotCounts = {};
+              activities.forEach(act => {
+                const count = es.filter(e => e.activity_type === act.id).length;
+                if (count > 0) dotCounts[act.id] = Math.min(count, 2);
+              });
+              return (
+                <div key={ds} className={`cal-cell ${isToday?"today":""} ${hasAct?"active":""}`}>
+                  <span className="cal-day">{day}</span>
+                  {Object.keys(dotCounts).length > 0 && (
+                    <div className="cal-dots">
+                      {activities.map(act =>
+                        Array.from({ length: dotCounts[act.id] || 0 }, (_, j) => (
+                          <span key={`${act.id}${j}`} className="dot" style={{ background: act.color }} />
+                        ))
+                      )}
+                    </div>
+                  )}
+                  {dp > 0 && <span className="cal-pts">{dp}</span>}
+                </div>
+              );
+            })}
+          </div>
+          <div className="cal-legend">
+            {activities.map(act => (
+              <span key={act.id}><span className="dot" style={{ background: act.color }} /> {act.label}</span>
+            ))}
+          </div>
+          <p style={{ textAlign:"center", color:P.soft, fontSize:12, marginTop:4, paddingBottom:10 }}>
+            {activities.map(act => {
+              const count = stats.actCounts[act.id] || 0;
+              const mindful = stats.mindfulCounts?.[act.id] || 0;
+              return `${count} ${act.label.toLowerCase()}${mindful ? ` (${mindful}✦)` : ""}`;
+            }).join(" · ")}
+          </p>
+        </GlassCard>
+        <div style={{ textAlign:"center", marginTop:16 }}>
+          <p style={{ color:P.soft, fontSize:13 }}>
+            <span style={{ color:P.gold, fontWeight:600 }}>{stats.pts}</span> stars this month
+            {stats.target && <span style={{ color:P.nebula }}> · Monthly goal reached</span>}
+            {stats.stretch && <span style={{ color:P.gold }}> · Stretch goal reached</span>}
+          </p>
+        </div>
+      </>)}
+
+      {/* ══════════ CHECK-IN VIEW (weekly goals & intentions) ══════════ */}
+      {activeView === "checkin" && (<>
+        <GlassCard className="section-card" style={{ marginTop:8 }}>
+          <div className="card-header">
+            <h3 className="card-title">Week {cw}</h3>
+            <span className="card-pts" style={{ color:P.nebula }}>{wp} / {targets.weeklyStarTarget}</span>
+          </div>
+          {streak > 0
+            ? <p style={{ color:P.gold, fontSize:13, marginBottom:6 }}>✦ {streak}-night glow</p>
+            : <p style={{ color:P.soft, fontSize:13, marginBottom:6 }}>Every star counts, even small ones.</p>}
+          {curPromise && (
+            <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontStyle:"italic", fontSize:13, marginBottom:8, lineHeight:1.5 }}>
+              This week: "{curPromise}"
+            </p>
+          )}
+          {!curPromise && !claimed.includes(curWeekKey) && (
+            <button className="btn-ghost" style={{ fontSize:12, color:P.nebula, padding:"2px 0", marginBottom:8 }}
+              onClick={() => setPromiseModal({ wk: cw, rk: curWeekKey })}>
+              ✦ Set a weekly intention
+            </button>
+          )}
+          {milestone && <p className="milestone">{milestone}</p>}
+          <div className="divider" />
+          <p style={{ color:P.soft, fontSize:12, fontWeight:600, marginBottom:8 }}>Constellation Goal</p>
+          <ConstellationBar pts={wp} target={targets.weeklyStarTarget} />
+          <p style={{ color:P.soft, fontSize:12, marginTop:12 }}>
+            {goalHit ? `✦ ${peekText}` : `☽ ${peekText}`}
+          </p>
+        </GlassCard>
+
+        <div className="section-header">
+          <h3 style={{ color:P.text, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:18 }}>Weekly Sky</h3>
+        </div>
+        <div className="week-pills">
+          {Array.from({ length: numWeeks }, (_, i) => i + 1).map(wk => {
+            const wkPts = weekStars(entries, viewYear, viewMonth, wk, activities);
+            const wkGoal = wkPts >= targets.weeklyStarTarget;
+            const isCur = isCurrentMonth && wk === cw;
+            return (
+              <GlassCard key={wk} className={`week-pill ${isCur ? "current" : ""}`} glow={isCur} glowColor={P.nebula}>
+                <span className="wp-label">W{wk}</span>
+                <span className="wp-pts">{wkPts}</span>
+                {wkGoal
+                  ? <span className="wp-tier" style={{ color: P.gold }}>✦</span>
+                  : <span className="wp-tier" style={{ color: P.dim }}>·</span>}
+              </GlassCard>
+            );
+          })}
+        </div>
+
+        <div className="section-header" style={{ marginTop:20 }}>
+          <h3 style={{ color:P.text, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:18 }}>☽ Weekly Intentions</h3>
+        </div>
         {Array.from({ length: numWeeks }, (_, i) => i + 1).map(wk => {
           const wkPts = weekStars(entries, viewYear, viewMonth, wk, activities);
           const wkGoal = wkPts >= targets.weeklyStarTarget;
-          const isCur = isCurrentMonth && wk === cw;
+          const exceeded = wkPts >= targets.weeklyStarTarget * 1.5;
+          const rk = `${viewYear}-${String(viewMonth).padStart(2,"0")}-W${wk}`;
+          const isClaimed = claimed.includes(rk);
+          const hasPromise = !!promises[rk];
+          const promiseText = promises[rk] || "";
+          const [ws, we] = weekRange(viewYear, viewMonth, wk);
+          const weekPast = new Date() > we;
+          const isCurWeek = isCurrentMonth && wk === cw;
+          const dateLabel = `Week ${wk} · ${ws.toLocaleDateString("en-US",{month:"short",day:"numeric"})}–${we.getDate()}`;
           return (
-            <GlassCard key={wk} className={`week-pill ${isCur ? "current" : ""}`} glow={isCur} glowColor={P.nebula}>
-              <span className="wp-label">W{wk}</span>
-              <span className="wp-pts">{wkPts}</span>
-              {wkGoal
-                ? <span className="wp-tier" style={{ color: P.gold }}>✦</span>
-                : <span className="wp-tier" style={{ color: P.dim }}>·</span>}
+            <GlassCard key={rk} className="section-card reward-row">
+              <div style={{ marginBottom: hasPromise ? 8 : 0 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ color:P.text, fontSize:13 }}>{dateLabel}</span>
+                  {!hasPromise && (isCurWeek || !weekPast) && !isClaimed && (
+                    <button className="btn-ghost" style={{ fontSize:12, padding:"4px 12px", color:P.nebula }}
+                      onClick={() => setPromiseModal({ wk, rk })}>Set intention</button>
+                  )}
+                  {!hasPromise && weekPast && !isCurWeek && !isClaimed && (
+                    <span style={{ color:P.dim, fontSize:12 }}>No intention set</span>
+                  )}
+                  {hasPromise && !wkGoal && !weekPast && (
+                    <span style={{ color:P.dim, fontSize:12 }}>{Math.round((targets.weeklyStarTarget - wkPts) * 10) / 10} stars to go</span>
+                  )}
+                  {hasPromise && wkGoal && !isClaimed && (
+                    <button className="btn-primary" style={{ fontSize:12, padding:"4px 14px" }}
+                      onClick={() => setRewardModal({ wk, rk, exceeded })}>Reflect</button>
+                  )}
+                  {hasPromise && !wkGoal && weekPast && !isClaimed && (
+                    <span style={{ color:P.soft, fontSize:12, fontStyle:"italic" }}>Your intention still matters</span>
+                  )}
+                  {isClaimed && (
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <span style={{ color:P.gold, fontSize:13 }}>✦ Honored</span>
+                      <button className="btn-ghost" style={{ fontSize:11, padding:"2px 8px" }} onClick={() => unclaim(rk)}>undo</button>
+                    </div>
+                  )}
+                </div>
+                {hasPromise && (
+                  <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontStyle:"italic", fontSize:13, marginTop:6, lineHeight:1.5 }}>"{promiseText}"</p>
+                )}
+              </div>
             </GlassCard>
           );
         })}
-      </div>
+      </>)}
 
-      {/* ── Weekly Intentions ── */}
-      <div className="section-header" style={{ marginTop:20 }}>
-        <h3 style={{ color:P.text, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:18 }}>☽ Weekly Intentions</h3>
-      </div>
-      {Array.from({ length: numWeeks }, (_, i) => i + 1).map(wk => {
-        const wkPts = weekStars(entries, viewYear, viewMonth, wk, activities);
-        const wkGoal = wkPts >= targets.weeklyStarTarget;
-        const exceeded = wkPts >= targets.weeklyStarTarget * 1.5;
-        const rk = `${viewYear}-${String(viewMonth).padStart(2,"0")}-W${wk}`;
-        const isClaimed = claimed.includes(rk);
-        const hasPromise = !!promises[rk];
-        const promiseText = promises[rk] || "";
-        const [ws, we] = weekRange(viewYear, viewMonth, wk);
-        const weekPast = new Date() > we;
-        const isCurWeek = isCurrentMonth && wk === cw;
-        const dateLabel = `Week ${wk} · ${ws.toLocaleDateString("en-US",{month:"short",day:"numeric"})}–${we.getDate()}`;
-
-        return (
-          <GlassCard key={rk} className="section-card reward-row">
-            <div style={{ marginBottom: hasPromise ? 8 : 0 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <span style={{ color:P.text, fontSize:13 }}>{dateLabel}</span>
-                {/* State: no promise set yet, current or future week */}
-                {!hasPromise && (isCurWeek || !weekPast) && !isClaimed && (
-                  <button className="btn-ghost" style={{ fontSize:12, padding:"4px 12px", color:P.nebula }}
-                    onClick={() => setPromiseModal({ wk, rk })}>
-                    Set intention
-                  </button>
-                )}
-                {/* State: no promise, past week, never claimed */}
-                {!hasPromise && weekPast && !isCurWeek && !isClaimed && (
-                  <span style={{ color:P.dim, fontSize:12 }}>No intention set</span>
-                )}
-                {/* State: goal not met yet */}
-                {hasPromise && !wkGoal && !weekPast && (
-                  <span style={{ color:P.dim, fontSize:12 }}>
-                    {Math.round((targets.weeklyStarTarget - wkPts) * 10) / 10} stars to go
-                  </span>
-                )}
-                {/* State: goal met, not claimed — ready to reflect */}
-                {hasPromise && wkGoal && !isClaimed && (
-                  <button className="btn-primary" style={{ fontSize:12, padding:"4px 14px" }}
-                    onClick={() => setRewardModal({ wk, rk, exceeded })}>
-                    Reflect
-                  </button>
-                )}
-                {/* State: goal not met, week is over */}
-                {hasPromise && !wkGoal && weekPast && !isClaimed && (
-                  <span style={{ color:P.soft, fontSize:12, fontStyle:"italic" }}>
-                    Your intention still matters
-                  </span>
-                )}
-                {/* State: claimed */}
-                {isClaimed && (
-                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <span style={{ color:P.gold, fontSize:13 }}>✦ Honored</span>
-                    <button className="btn-ghost" style={{ fontSize:11, padding:"2px 8px" }} onClick={() => unclaim(rk)}>undo</button>
-                  </div>
-                )}
-              </div>
-              {/* Show promise text if set */}
-              {hasPromise && (
-                <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontStyle:"italic", fontSize:13, marginTop:6, lineHeight:1.5 }}>
-                  "{promiseText}"
-                </p>
-              )}
-            </div>
-          </GlassCard>
-        );
-      })}
-
-      <div style={{ height:50 }} />
+      <div style={{ height:80 }} />
     </div>
 
+    {/* ── Bottom Navigation ── */}
+    <nav style={{
+      position:"fixed", bottom:0, left:0, right:0, zIndex:50,
+      background:`linear-gradient(to top, ${P.bg} 80%, transparent)`,
+      paddingBottom:"max(12px, env(safe-area-inset-bottom))", paddingTop:16,
+    }}>
+      <div style={{ display:"flex", justifyContent:"center", gap:4, maxWidth:480, margin:"0 auto" }}>
+        {[
+          { id:"tonight", label:"Tonight", icon:"✦" },
+          { id:"flow", label:"Flow", icon:"☽" },
+          { id:"checkin", label:"Check-in", icon:"⟡" },
+        ].map(tab => (
+          <button key={tab.id} onClick={() => setActiveView(tab.id)}
+            style={{
+              flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3,
+              background: activeView === tab.id ? P.glass : "transparent",
+              border: activeView === tab.id ? `1px solid ${P.glassBorder}` : "1px solid transparent",
+              borderRadius:12, padding:"8px 4px", cursor:"pointer",
+              transition:"all 0.2s ease",
+            }}>
+            <span style={{
+              fontSize:18, color: activeView === tab.id ? P.gold : P.dim,
+              transition:"color 0.2s ease",
+            }}>{tab.icon}</span>
+            <span style={{
+              fontSize:10, fontWeight:500,
+              color: activeView === tab.id ? P.text : P.muted,
+              fontFamily:"'Inter', sans-serif", letterSpacing:"0.03em",
+            }}>{tab.label}</span>
+          </button>
+        ))}
+      </div>
+    </nav>
     {/* ── Modals ── */}
     {showLog && <LogModal onClose={() => setShowLog(false)} onLog={addEntry} activities={activities} allEntries={entries} />}
     {promiseModal && <PromiseModal {...promiseModal} onClose={() => setPromiseModal(null)}
@@ -2154,7 +2191,7 @@ export default function StarFlow() {
             <div style={{ background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:14, padding:14, marginBottom:10 }}>
               <p style={{ color:P.aurora, fontWeight:600, fontSize:14, marginBottom:4 }}>✦ Show Up</p>
               <p style={{ color:P.soft, fontSize:12, lineHeight:1.5 }}>
-                Any intentional movement counts. Meet the minimum for your activity and a star appears in your sky.
+                Any intentional movement counts. Every moment you log places a star in your sky.
               </p>
             </div>
             <div style={{ background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:14, padding:14, marginBottom:10 }}>
@@ -2171,8 +2208,8 @@ export default function StarFlow() {
             </div>
             <div className="divider" />
             <p style={{ color:P.muted, fontSize:11, fontStyle:"italic", lineHeight:1.6 }}>
-              Soft pacing: your first effort each day shines brightest. More sessions still count — with a gentler glow.
-              There's no daily cap. Just natural rhythm.
+              Every session earns at least one full star. Bonuses for presence and return light add glow.
+              More sessions still count — bonuses are gentler, but the base star is always yours.
             </p>
             <div className="divider" />
             <p style={{ color:P.soft, fontSize:12, marginTop:4 }}>
