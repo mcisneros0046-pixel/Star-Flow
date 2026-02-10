@@ -380,12 +380,24 @@ function LogModal({ onClose, onLog, activities, allEntries }) {
   const [activityId, setActivityId] = useState(activities[0]?.id || "");
   const [duration, setDuration] = useState("30");
   const [mindful, setMindful] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(todayStr());
+
+  // Build last 7 days
+  const datePills = [];
+  for (let i = 0; i < 8; i++) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const ds = d.toISOString().slice(0, 10);
+    const label = i === 0 ? "Today"
+      : i === 1 ? "Yesterday"
+      : d.toLocaleDateString("en-US", { weekday:"short", month:"short", day:"numeric" });
+    datePills.push({ ds, label });
+  }
 
   const handleLog = () => {
     const mins = parseInt(duration, 10);
     if (!mins || mins < 1) return;
     onLog({
-      date: todayStr(),
+      date: selectedDate,
       activity_type: activityId,
       duration_min: mins,
       mindful,
@@ -401,6 +413,24 @@ function LogModal({ onClose, onLog, activities, allEntries }) {
         <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:26, fontWeight:600, marginBottom:24 }}>
           Add a Moment
         </h2>
+
+        {/* Date selector */}
+        <div style={{ display:"flex", gap:6, overflowX:"auto", marginBottom:20, paddingBottom:4, WebkitOverflowScrolling:"touch" }}>
+          {datePills.map(({ ds, label }) => (
+            <button key={ds} onClick={() => setSelectedDate(ds)}
+              style={{
+                flexShrink:0, padding:"6px 12px", borderRadius:10, fontSize:12, fontWeight:500,
+                cursor:"pointer", transition:"all 0.2s ease", whiteSpace:"nowrap",
+                fontFamily:"'Inter', sans-serif",
+                background: selectedDate === ds ? P.nebula : P.glass,
+                color: selectedDate === ds ? "#fff" : P.soft,
+                border: selectedDate === ds ? `1px solid ${P.nebula}` : `1px solid ${P.glassBorder}`,
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
         <div style={{ display:"flex", gap:10, justifyContent:"center", marginBottom:20, flexWrap:"wrap" }}>
           {activities.map(a => (
             <button key={a.id} onClick={() => { setActivityId(a.id); setMindful(false); }}
