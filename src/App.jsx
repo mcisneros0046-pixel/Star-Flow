@@ -1324,11 +1324,28 @@ RULES FOR REWARDS (flat list of 6-8 items):
 // ─── SETTINGS & ACCOUNT MODAL ────────────────────────────────────────────────
 
 function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted, onUpdateData }) {
+  const [tab, setTab] = useState("account"); // account | activities | goals
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [deleteTyped, setDeleteTyped] = useState("");
+  const [saved, setSaved] = useState(false);
   const fileInputRef = useRef(null);
+
+  // ── Activities tab state ──
+  const [editActivities, setEditActivities] = useState(() =>
+    (userData?.activities || []).map(a => ({ ...a }))
+  );
+  const [showAddPreset, setShowAddPreset] = useState(false);
+  const [showCustomForm, setShowCustomForm] = useState(false);
+  const [customLabel, setCustomLabel] = useState("");
+  const [customColor, setCustomColor] = useState(ACTIVITY_PRESETS[2]?.color || "#6EFFC5");
+  const [customDuration, setCustomDuration] = useState(20);
+
+  // ── Goals tab state ──
+  const [editTargets, setEditTargets] = useState(() => ({
+    ...(userData?.targets || DEFAULT_TARGETS)
+  }));
 
   const providerIds = user.providerData?.map(p => p.providerId) || [];
   const isGoogle = providerIds.includes("google.com");
@@ -1342,32 +1359,69 @@ function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted, o
   const totalEntries = userData?.entries?.length || 0;
   const totalClaimed = userData?.claimed?.length || 0;
 
-  // Profile picture: prefer custom uploaded, then Google/Apple photo
   const customPhoto = userData?.profile?.photoURL;
   const authPhoto = user.photoURL;
   const displayPhoto = customPhoto || authPhoto;
 
+  // Flash "Saved" confirmation
+  const flashSaved = () => { setSaved(true); setTimeout(() => setSaved(false), 1500); };
+
+  // ── Save activities ──
+  const saveActivities = () => {
+    onUpdateData({ activities: editActivities });
+    flashSaved();
+  };
+
+  // ── Save goals ──
+  const saveGoals = () => {
+    onUpdateData({ targets: editTargets });
+    flashSaved();
+  };
+
+  // ── Add preset activity ──
+  const addPreset = (preset) => {
+    if (editActivities.some(a => a.id === preset.id)) return;
+    const newAct = { ...preset };
+    setEditActivities(prev => [...prev, newAct]);
+    setShowAddPreset(false);
+  };
+
+  // ── Add custom activity ──
+  const addCustomActivity = () => {
+    if (!customLabel.trim()) return;
+    const id = customLabel.toLowerCase().replace(/[^a-z0-9]/g, "_") + "_" + Date.now().toString(36);
+    const colorLight = `rgba(${parseInt(customColor.slice(1,3),16)*0.16|0},${parseInt(customColor.slice(3,5),16)*0.14|0},${parseInt(customColor.slice(5,7),16)*0.18|0},0.7)`;
+    const newAct = {
+      id, label: customLabel.trim(), color: customColor, colorLight,
+      minDuration: customDuration, baseStars: 1, midDuration: null, midStars: null,
+      bonusLabel: "Mindful session", bonusStars: 1,
+    };
+    setEditActivities(prev => [...prev, newAct]);
+    setCustomLabel(""); setCustomDuration(20); setShowCustomForm(false);
+  };
+
+  // ── Remove activity ──
+  const removeActivity = (id) => {
+    setEditActivities(prev => prev.filter(a => a.id !== id));
+  };
+
+  // ── Photo handling ──
   const handlePhotoUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 500000) { alert("Image too large. Please use an image under 500KB."); return; }
     const reader = new FileReader();
     reader.onload = (ev) => {
-      // Create a canvas to resize
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
         const size = 128;
-        canvas.width = size;
-        canvas.height = size;
+        canvas.width = size; canvas.height = size;
         const ctx = canvas.getContext("2d");
-        // Crop to square from center
         const min = Math.min(img.width, img.height);
-        const sx = (img.width - min) / 2;
-        const sy = (img.height - min) / 2;
+        const sx = (img.width - min) / 2, sy = (img.height - min) / 2;
         ctx.drawImage(img, sx, sy, min, min, 0, 0, size, size);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
-        onUpdateData({ profile: { ...userData.profile, photoURL: dataUrl } });
+        onUpdateData({ profile: { ...userData.profile, photoURL: canvas.toDataURL("image/jpeg", 0.8) } });
       };
       img.src = ev.target.result;
     };
@@ -1380,179 +1434,412 @@ function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted, o
   };
 
   const handleDeleteAccount = async () => {
-    setDeleteLoading(true);
-    setDeleteError("");
+    setDeleteLoading(true); setDeleteError("");
     try {
       await deleteDoc(doc(db, "users", user.uid));
-      try {
-        await deleteUser(user);
-      } catch (reAuthErr) {
+      try { await deleteUser(user); }
+      catch (reAuthErr) {
         if (reAuthErr.code === "auth/requires-recent-login") {
-          if (isGoogle) {
-            await reauthenticateWithPopup(user, googleProvider);
-          } else if (isApple) {
-            await reauthenticateWithPopup(user, appleProvider);
-          } else {
-            setDeleteError("For security, please sign out and sign back in, then try deleting again.");
-            setDeleteLoading(false);
-            return;
-          }
+          if (isGoogle) await reauthenticateWithPopup(user, googleProvider);
+          else if (isApple) await reauthenticateWithPopup(user, appleProvider);
+          else { setDeleteError("For security, please sign out and sign back in, then try deleting again."); setDeleteLoading(false); return; }
           await deleteUser(user);
-        } else {
-          throw reAuthErr;
-        }
+        } else throw reAuthErr;
       }
       onAccountDeleted();
     } catch (err) {
       console.error("Delete error:", err);
-      if (err.code === "auth/requires-recent-login") {
-        setDeleteError("Session expired. Please sign out, sign back in, and try again.");
-      } else {
-        setDeleteError("Something went wrong. Please try again.");
-      }
+      setDeleteError(err.code === "auth/requires-recent-login"
+        ? "Session expired. Please sign out, sign back in, and try again."
+        : "Something went wrong. Please try again.");
     }
     setDeleteLoading(false);
   };
 
+  // Available presets (not already added)
+  const availablePresets = ACTIVITY_PRESETS.filter(p => !editActivities.some(a => a.id === p.id));
+
+  const tabStyle = (t) => ({
+    flex:1, padding:"10px 0", fontSize:12, fontWeight:600, letterSpacing:"0.5px",
+    background: tab === t ? P.glass : "transparent",
+    border: tab === t ? `1px solid ${P.glassBorder}` : "1px solid transparent",
+    borderRadius:10, color: tab === t ? P.text : P.muted,
+    cursor:"pointer", transition:"all 0.2s", fontFamily:"'Inter', sans-serif",
+  });
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content modal-reward" onClick={e => e.stopPropagation()} style={{ maxWidth:420 }}>
-        <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:24, fontWeight:600, marginBottom:20 }}>
+        <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:24, fontWeight:600, marginBottom:16 }}>
           Settings
         </h2>
 
-        {/* ── Account Info ── */}
-        <div className="settings-section">
-          <h4 className="settings-section-title">Account</h4>
-          <div className="settings-info-grid">
-            {/* Profile Picture */}
-            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", marginBottom:16 }}>
-              <div style={{ position:"relative", cursor:"pointer" }} onClick={() => fileInputRef.current?.click()}>
-                {displayPhoto ? (
-                  <img src={displayPhoto} alt="" style={{ width:72, height:72, borderRadius:"50%", border:`2px solid ${P.dim}`, objectFit:"cover" }} />
-                ) : (
+        {/* ── Tabs ── */}
+        <div style={{ display:"flex", gap:4, marginBottom:20 }}>
+          <button style={tabStyle("account")} onClick={() => setTab("account")}>Account</button>
+          <button style={tabStyle("activities")} onClick={() => setTab("activities")}>Activities</button>
+          <button style={tabStyle("goals")} onClick={() => setTab("goals")}>Goals</button>
+        </div>
+
+        {/* ── Saved flash ── */}
+        {saved && (
+          <div style={{
+            textAlign:"center", padding:"6px 12px", marginBottom:12, borderRadius:10,
+            background:"rgba(110,197,255,0.1)", border:`1px solid rgba(110,197,255,0.2)`,
+            color:P.aurora, fontSize:13, fontWeight:500, animation:"fade-in 0.2s ease",
+          }}>✦ Saved</div>
+        )}
+
+        {/* ═══════ ACCOUNT TAB ═══════ */}
+        {tab === "account" && (<>
+          <div className="settings-section">
+            <h4 className="settings-section-title">Account</h4>
+            <div className="settings-info-grid">
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", marginBottom:16 }}>
+                <div style={{ position:"relative", cursor:"pointer" }} onClick={() => fileInputRef.current?.click()}>
+                  {displayPhoto ? (
+                    <img src={displayPhoto} alt="" style={{ width:72, height:72, borderRadius:"50%", border:`2px solid ${P.dim}`, objectFit:"cover" }} />
+                  ) : (
+                    <div style={{
+                      width:72, height:72, borderRadius:"50%", border:`2px dashed ${P.dim}`,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      background:P.glass, color:P.muted, fontSize:24,
+                    }}>
+                      {(userData?.profile?.displayName || user.displayName || "?")[0]?.toUpperCase()}
+                    </div>
+                  )}
                   <div style={{
-                    width:72, height:72, borderRadius:"50%", border:`2px dashed ${P.dim}`,
-                    display:"flex", alignItems:"center", justifyContent:"center",
-                    background:P.glass, color:P.muted, fontSize:24,
+                    position:"absolute", bottom:-2, right:-2, width:24, height:24, borderRadius:"50%",
+                    background:P.nebula, display:"flex", alignItems:"center", justifyContent:"center",
+                    border:`2px solid ${P.bg}`,
                   }}>
-                    {(userData?.profile?.displayName || user.displayName || "?")[0]?.toUpperCase()}
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>
+                    </svg>
                   </div>
-                )}
-                <div style={{
-                  position:"absolute", bottom:-2, right:-2,
-                  width:24, height:24, borderRadius:"50%",
-                  background:P.nebula, display:"flex", alignItems:"center", justifyContent:"center",
-                  border:`2px solid ${P.bg}`,
-                }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-                    <circle cx="12" cy="13" r="4"/>
-                  </svg>
+                </div>
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoUpload} style={{ display:"none" }} />
+                <div style={{ display:"flex", gap:8, marginTop:8 }}>
+                  <button className="btn-ghost" style={{ fontSize:11, padding:"2px 10px" }} onClick={() => fileInputRef.current?.click()}>
+                    {displayPhoto ? "Change photo" : "Add photo"}
+                  </button>
+                  {customPhoto && (
+                    <button className="btn-ghost" style={{ fontSize:11, padding:"2px 10px", color:P.muted }} onClick={handleRemovePhoto}>Remove</button>
+                  )}
                 </div>
               </div>
-              <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoUpload}
-                style={{ display:"none" }} />
-              <div style={{ display:"flex", gap:8, marginTop:8 }}>
-                <button className="btn-ghost" style={{ fontSize:11, padding:"2px 10px" }}
-                  onClick={() => fileInputRef.current?.click()}>
-                  {displayPhoto ? "Change photo" : "Add photo"}
-                </button>
-                {customPhoto && (
-                  <button className="btn-ghost" style={{ fontSize:11, padding:"2px 10px", color:P.muted }}
-                    onClick={handleRemovePhoto}>
-                    Remove
-                  </button>
-                )}
+              <div className="settings-info-row">
+                <span className="settings-info-label">Name</span>
+                <span className="settings-info-value">{userData?.profile?.displayName || user.displayName || "—"}</span>
+              </div>
+              <div className="settings-info-row">
+                <span className="settings-info-label">Email</span>
+                <span className="settings-info-value">{user.email || "—"}</span>
+              </div>
+              <div className="settings-info-row">
+                <span className="settings-info-label">Sign-in method</span>
+                <span className="settings-info-value">{signInMethod}</span>
+              </div>
+              <div className="settings-info-row">
+                <span className="settings-info-label">Member since</span>
+                <span className="settings-info-value">{createdAt}</span>
               </div>
             </div>
+          </div>
 
-            <div className="settings-info-row">
-              <span className="settings-info-label">Name</span>
-              <span className="settings-info-value">{userData?.profile?.displayName || user.displayName || "—"}</span>
-            </div>
-            <div className="settings-info-row">
-              <span className="settings-info-label">Email</span>
-              <span className="settings-info-value">{user.email || "—"}</span>
-            </div>
-            <div className="settings-info-row">
-              <span className="settings-info-label">Sign-in method</span>
-              <span className="settings-info-value">{signInMethod}</span>
-            </div>
-            <div className="settings-info-row">
-              <span className="settings-info-label">Member since</span>
-              <span className="settings-info-value">{createdAt}</span>
+          <div className="settings-section">
+            <h4 className="settings-section-title">Data</h4>
+            <div className="settings-info-grid">
+              <div className="settings-info-row">
+                <span className="settings-info-label">Activities tracked</span>
+                <span className="settings-info-value">{userData?.activities?.length || 0}</span>
+              </div>
+              <div className="settings-info-row">
+                <span className="settings-info-label">Total entries</span>
+                <span className="settings-info-value">{totalEntries}</span>
+              </div>
+              <div className="settings-info-row">
+                <span className="settings-info-label">Rewards claimed</span>
+                <span className="settings-info-value">{totalClaimed}</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* ── Stats ── */}
-        <div className="settings-section">
-          <h4 className="settings-section-title">Data</h4>
-          <div className="settings-info-grid">
-            <div className="settings-info-row">
-              <span className="settings-info-label">Activities tracked</span>
-              <span className="settings-info-value">{userData?.activities?.length || 0}</span>
-            </div>
-            <div className="settings-info-row">
-              <span className="settings-info-label">Total entries</span>
-              <span className="settings-info-value">{totalEntries}</span>
-            </div>
-            <div className="settings-info-row">
-              <span className="settings-info-label">Rewards claimed</span>
-              <span className="settings-info-value">{totalClaimed}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* ── Actions ── */}
-        <div className="settings-section">
-          <button className="settings-action-btn" onClick={() => { onClose(); onSignOut(); }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-            </svg>
-            Sign Out
-          </button>
-
-          <div className="divider" />
-
-          {!confirmDelete ? (
-            <button className="settings-action-btn danger" onClick={() => setConfirmDelete(true)}>
+          <div className="settings-section">
+            <button className="settings-action-btn" onClick={() => { onClose(); onSignOut(); }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
               </svg>
-              Delete Account
+              Sign Out
             </button>
-          ) : (
-            <div className="delete-confirm">
-              <p style={{ color:"#FF9C8C", fontSize:13, fontWeight:500, marginBottom:8 }}>
-                This will permanently delete your account and all your data. This cannot be undone.
-              </p>
-              <p style={{ color:P.soft, fontSize:12, marginBottom:10 }}>
-                Type <strong style={{ color:P.text }}>DELETE</strong> to confirm:
-              </p>
-              <input type="text" value={deleteTyped} onChange={e => setDeleteTyped(e.target.value)}
-                className="onboard-input" placeholder="Type DELETE"
-                style={{ fontSize:14, padding:"10px 14px", marginBottom:10, textTransform:"uppercase" }} />
-              {deleteError && <p style={{ color:"#FF9C8C", fontSize:12, marginBottom:8 }}>{deleteError}</p>}
-              <div style={{ display:"flex", gap:10 }}>
-                <button className="btn-primary" onClick={handleDeleteAccount}
-                  disabled={deleteTyped.toUpperCase() !== "DELETE" || deleteLoading}
-                  style={{ background: deleteTyped.toUpperCase() === "DELETE" ? "#C0392B" : P.dim, flex:1 }}>
-                  {deleteLoading ? (
-                    <span style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-                      <span className="ai-spinner" style={{ borderTopColor:"#FF9C8C" }} /> Deleting…
-                    </span>
-                  ) : "Permanently Delete"}
+            <div className="divider" />
+            {!confirmDelete ? (
+              <button className="settings-action-btn danger" onClick={() => setConfirmDelete(true)}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+                </svg>
+                Delete Account
+              </button>
+            ) : (
+              <div className="delete-confirm">
+                <p style={{ color:"#FF9C8C", fontSize:13, fontWeight:500, marginBottom:8 }}>
+                  This will permanently delete your account and all your data. This cannot be undone.
+                </p>
+                <p style={{ color:P.soft, fontSize:12, marginBottom:10 }}>
+                  Type <strong style={{ color:P.text }}>DELETE</strong> to confirm:
+                </p>
+                <input type="text" value={deleteTyped} onChange={e => setDeleteTyped(e.target.value)}
+                  className="onboard-input" placeholder="Type DELETE"
+                  style={{ fontSize:14, padding:"10px 14px", marginBottom:10, textTransform:"uppercase" }} />
+                {deleteError && <p style={{ color:"#FF9C8C", fontSize:12, marginBottom:8 }}>{deleteError}</p>}
+                <div style={{ display:"flex", gap:10 }}>
+                  <button className="btn-primary" onClick={handleDeleteAccount}
+                    disabled={deleteTyped.toUpperCase() !== "DELETE" || deleteLoading}
+                    style={{ background: deleteTyped.toUpperCase() === "DELETE" ? "#C0392B" : P.dim, flex:1 }}>
+                    {deleteLoading ? (
+                      <span style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+                        <span className="ai-spinner" style={{ borderTopColor:"#FF9C8C" }} /> Deleting…
+                      </span>
+                    ) : "Permanently Delete"}
+                  </button>
+                  <button className="btn-ghost" onClick={() => { setConfirmDelete(false); setDeleteTyped(""); setDeleteError(""); }}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </>)}
+
+        {/* ═══════ ACTIVITIES TAB ═══════ */}
+        {tab === "activities" && (<>
+          <div className="settings-section">
+            <h4 className="settings-section-title">Your Activities</h4>
+            <p style={{ color:P.muted, fontSize:12, marginBottom:14, lineHeight:1.5 }}>
+              These are the activities you can log. Add, remove, or reorder to match your practice.
+            </p>
+
+            {/* Current activities list */}
+            <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:16 }}>
+              {editActivities.map((act, i) => (
+                <div key={act.id} style={{
+                  display:"flex", alignItems:"center", gap:10, padding:"10px 14px",
+                  background: act.colorLight || P.glass,
+                  border:`1px solid color-mix(in srgb, ${act.color} 25%, transparent)`,
+                  borderRadius:14, animation:"fade-in 0.2s ease",
+                }}>
+                  <span style={{ color:act.color, fontSize:16 }}>✦</span>
+                  <div style={{ flex:1 }}>
+                    <span style={{ color:P.text, fontSize:14, fontWeight:500 }}>{act.label}</span>
+                    <span style={{ color:P.muted, fontSize:11, marginLeft:8 }}>{act.minDuration}+ min</span>
+                  </div>
+                  {editActivities.length > 1 && (
+                    <button onClick={() => removeActivity(act.id)}
+                      style={{ background:"none", border:"none", color:P.dim, cursor:"pointer", fontSize:16, padding:"0 4px", transition:"color 0.2s" }}
+                      onMouseOver={e => e.target.style.color = "#FF9C8C"}
+                      onMouseOut={e => e.target.style.color = P.dim}>×</button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Add from presets */}
+            {!showAddPreset && !showCustomForm && availablePresets.length > 0 && (
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                <button className="btn-ghost" style={{ fontSize:12, color:P.nebula, padding:"6px 14px", border:`1px solid ${P.dim}`, borderRadius:10 }}
+                  onClick={() => setShowAddPreset(true)}>
+                  + Add Activity
                 </button>
-                <button className="btn-ghost" onClick={() => { setConfirmDelete(false); setDeleteTyped(""); setDeleteError(""); }}>
-                  Cancel
+                <button className="btn-ghost" style={{ fontSize:12, color:P.muted, padding:"6px 14px", border:`1px solid ${P.dim}`, borderRadius:10 }}
+                  onClick={() => setShowCustomForm(true)}>
+                  + Custom
                 </button>
               </div>
+            )}
+            {!showAddPreset && !showCustomForm && availablePresets.length === 0 && (
+              <button className="btn-ghost" style={{ fontSize:12, color:P.muted, padding:"6px 14px", border:`1px solid ${P.dim}`, borderRadius:10 }}
+                onClick={() => setShowCustomForm(true)}>
+                + Custom Activity
+              </button>
+            )}
+
+            {/* Preset picker */}
+            {showAddPreset && (
+              <div style={{ background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:14, padding:14, marginTop:4 }}>
+                <p style={{ color:P.soft, fontSize:12, fontWeight:500, marginBottom:10 }}>Choose an activity to add:</p>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                  {availablePresets.map(preset => (
+                    <button key={preset.id} onClick={() => addPreset(preset)}
+                      style={{
+                        background:"transparent", border:`1.5px solid color-mix(in srgb, ${preset.color} 40%, transparent)`,
+                        borderRadius:10, padding:"8px 14px", cursor:"pointer", transition:"all 0.2s",
+                        color:preset.color, fontSize:13, fontWeight:500, fontFamily:"'Inter', sans-serif",
+                      }}>
+                      ✦ {preset.label}
+                    </button>
+                  ))}
+                </div>
+                <button className="btn-ghost" onClick={() => setShowAddPreset(false)} style={{ fontSize:12, marginTop:10, color:P.dim }}>Cancel</button>
+              </div>
+            )}
+
+            {/* Custom activity form */}
+            {showCustomForm && (
+              <div style={{ background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:14, padding:14, marginTop:4 }}>
+                <p style={{ color:P.soft, fontSize:12, fontWeight:500, marginBottom:10 }}>Create a custom activity:</p>
+                <input type="text" value={customLabel} onChange={e => setCustomLabel(e.target.value)}
+                  placeholder="Activity name" className="onboard-input"
+                  style={{ fontSize:13, padding:"10px 14px", marginBottom:10 }} autoFocus />
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+                  <span style={{ color:P.muted, fontSize:12 }}>Color:</span>
+                  <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+                    {["#9C8CFF","#6EC5FF","#6EFFC5","#FF9C6E","#6ED8FF","#C5FF6E","#FF8CDB","#FFB86E"].map(c => (
+                      <button key={c} onClick={() => setCustomColor(c)}
+                        style={{
+                          width:24, height:24, borderRadius:"50%", border: customColor === c ? "2px solid white" : `2px solid ${P.dim}`,
+                          background:c, cursor:"pointer", transition:"all 0.15s",
+                        }} />
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+                  <span style={{ color:P.muted, fontSize:12 }}>Suggested min:</span>
+                  {[10,15,20,30,45,60].map(d => (
+                    <button key={d} onClick={() => setCustomDuration(d)}
+                      style={{
+                        padding:"4px 10px", borderRadius:8, fontSize:12, cursor:"pointer",
+                        background: customDuration === d ? P.nebula : "transparent",
+                        color: customDuration === d ? P.text : P.muted,
+                        border:`1px solid ${customDuration === d ? P.nebula : P.dim}`,
+                        fontFamily:"'Inter', sans-serif", transition:"all 0.15s",
+                      }}>{d}</button>
+                  ))}
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button className="btn-primary" onClick={addCustomActivity}
+                    disabled={!customLabel.trim()} style={{ fontSize:13, padding:"8px 18px" }}>
+                    Add
+                  </button>
+                  <button className="btn-ghost" onClick={() => { setShowCustomForm(false); setCustomLabel(""); }}
+                    style={{ fontSize:12 }}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ textAlign:"center", marginTop:16 }}>
+            <button className="btn-primary" onClick={saveActivities} style={{ padding:"10px 32px", fontSize:14 }}>
+              Save Activities
+            </button>
+          </div>
+        </>)}
+
+        {/* ═══════ GOALS TAB ═══════ */}
+        {tab === "goals" && (<>
+          <div className="settings-section">
+            <h4 className="settings-section-title">Weekly & Monthly Targets</h4>
+            <p style={{ color:P.muted, fontSize:12, marginBottom:16, lineHeight:1.5 }}>
+              Adjust your constellation goals to match your rhythm. These should feel reachable, not stressful.
+            </p>
+
+            {/* Sessions per week */}
+            <div className="target-row">
+              <div>
+                <span style={{ color:P.text, fontSize:14 }}>Sessions / week</span>
+                <p style={{ color:P.muted, fontSize:11 }}>How often you plan to move</p>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <button className="target-btn" onClick={() => setEditTargets(t => ({
+                  ...t, targetSessionsPerWeek: Math.max(1, t.targetSessionsPerWeek - 1),
+                  weeklyStarTarget: Math.round(Math.max(1, t.targetSessionsPerWeek - 1) * 1.6),
+                }))}>−</button>
+                <span style={{ color:P.gold, fontSize:18, fontWeight:600, fontFamily:"'Cormorant Garamond', Georgia, serif", minWidth:28, textAlign:"center" }}>
+                  {editTargets.targetSessionsPerWeek}
+                </span>
+                <button className="target-btn" onClick={() => setEditTargets(t => ({
+                  ...t, targetSessionsPerWeek: Math.min(7, t.targetSessionsPerWeek + 1),
+                  weeklyStarTarget: Math.round(Math.min(7, t.targetSessionsPerWeek + 1) * 1.6),
+                }))}>+</button>
+              </div>
             </div>
-          )}
-        </div>
+
+            {/* Weekly star target */}
+            <div className="target-row">
+              <div>
+                <span style={{ color:P.text, fontSize:14 }}>Weekly star goal</span>
+                <p style={{ color:P.muted, fontSize:11 }}>Stars to complete your constellation</p>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <button className="target-btn" onClick={() => setEditTargets(t => ({
+                  ...t, weeklyStarTarget: Math.max(2, t.weeklyStarTarget - 1),
+                }))}>−</button>
+                <span style={{ color:P.nebula, fontSize:18, fontWeight:600, fontFamily:"'Cormorant Garamond', Georgia, serif", minWidth:28, textAlign:"center" }}>
+                  {editTargets.weeklyStarTarget}
+                </span>
+                <button className="target-btn" onClick={() => setEditTargets(t => ({
+                  ...t, weeklyStarTarget: Math.min(30, t.weeklyStarTarget + 1),
+                }))}>+</button>
+              </div>
+            </div>
+
+            {/* Monthly target */}
+            <div className="target-row">
+              <div>
+                <span style={{ color:P.text, fontSize:14 }}>Monthly target</span>
+                <p style={{ color:P.muted, fontSize:11 }}>Total stars for the month</p>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <button className="target-btn" onClick={() => setEditTargets(t => ({
+                  ...t, monthlyTarget: Math.max(5, t.monthlyTarget - 5),
+                }))}>−</button>
+                <span style={{ color:P.text, fontSize:18, fontWeight:600, fontFamily:"'Cormorant Garamond', Georgia, serif", minWidth:28, textAlign:"center" }}>
+                  {editTargets.monthlyTarget}
+                </span>
+                <button className="target-btn" onClick={() => setEditTargets(t => ({
+                  ...t, monthlyTarget: Math.min(100, t.monthlyTarget + 5),
+                }))}>+</button>
+              </div>
+            </div>
+
+            {/* Monthly stretch */}
+            <div className="target-row" style={{ borderBottom:"none" }}>
+              <div>
+                <span style={{ color:P.text, fontSize:14 }}>Stretch goal</span>
+                <p style={{ color:P.muted, fontSize:11 }}>Ambitious monthly reach</p>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <button className="target-btn" onClick={() => setEditTargets(t => ({
+                  ...t, monthlyStretch: Math.max(t.monthlyTarget + 1, t.monthlyStretch - 5),
+                }))}>−</button>
+                <span style={{ color:P.gold, fontSize:18, fontWeight:600, fontFamily:"'Cormorant Garamond', Georgia, serif", minWidth:28, textAlign:"center" }}>
+                  {editTargets.monthlyStretch}
+                </span>
+                <button className="target-btn" onClick={() => setEditTargets(t => ({
+                  ...t, monthlyStretch: Math.min(150, t.monthlyStretch + 5),
+                }))}>+</button>
+              </div>
+            </div>
+          </div>
+
+          {/* Preview bar */}
+          <div style={{
+            background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:14,
+            padding:"12px 16px", marginBottom:16,
+          }}>
+            <p style={{ color:P.muted, fontSize:11, marginBottom:6 }}>Preview</p>
+            <p style={{ color:P.soft, fontSize:13, lineHeight:1.6 }}>
+              <span style={{ color:P.nebula, fontWeight:600 }}>{editTargets.targetSessionsPerWeek}</span> sessions/week →{" "}
+              <span style={{ color:P.gold, fontWeight:600 }}>{editTargets.weeklyStarTarget}</span> weekly stars ·{" "}
+              <span style={{ color:P.text, fontWeight:600 }}>{editTargets.monthlyTarget}</span> monthly ·{" "}
+              <span style={{ color:P.gold, fontWeight:600 }}>{editTargets.monthlyStretch}</span> stretch
+            </p>
+          </div>
+
+          <div style={{ textAlign:"center" }}>
+            <button className="btn-primary" onClick={saveGoals} style={{ padding:"10px 32px", fontSize:14 }}>
+              Save Goals
+            </button>
+          </div>
+        </>)}
 
         {!confirmDelete && (
           <div style={{ textAlign:"center", marginTop:16 }}>
