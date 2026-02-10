@@ -1509,6 +1509,9 @@ export default function StarFlow() {
   const [encouragement] = useState(() => ENCOURAGEMENTS[Math.floor(Math.random() * ENCOURAGEMENTS.length)]);
   const [showGuide, setShowGuide] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [devTaps, setDevTaps] = useState(0);
+  const [showDev, setShowDev] = useState(false);
+  const devTimer = useRef(null);
   const saveTimer = useRef(null);
 
   // Auth listener
@@ -1557,6 +1560,70 @@ export default function StarFlow() {
   }, [saveToCloud]);
 
   // ── Auth helpers ──
+
+  // ── Dev Mode: triple-tap title to reveal seed/clear buttons ──
+  const handleTitleTap = () => {
+    setDevTaps(prev => {
+      const next = prev + 1;
+      if (devTimer.current) clearTimeout(devTimer.current);
+      devTimer.current = setTimeout(() => setDevTaps(0), 800);
+      if (next >= 3) {
+        setShowDev(d => !d);
+        return 0;
+      }
+      return next;
+    });
+  };
+
+  const seedTestData = () => {
+    if (!userData || !activities.length) return;
+    const today = new Date();
+    const testEntries = [];
+
+    // Generate 14 days of realistic data working backward from today
+    for (let daysAgo = 13; daysAgo >= 0; daysAgo--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - daysAgo);
+      const ds = d.toISOString().slice(0, 10);
+
+      // ~70% chance of activity on any day (realistic consistency)
+      if (Math.random() > 0.7) continue; // skip day — creates reentry gaps
+
+      // Pick a random activity from user's configured activities
+      const act = activities[Math.floor(Math.random() * activities.length)];
+      const duration = act.minDuration + Math.floor(Math.random() * 20);
+      const mindful = Math.random() > 0.55; // ~45% mindful
+
+      testEntries.push({ date: ds, activity_type: act.id, duration_min: duration, mindful });
+
+      // ~25% chance of second session that day
+      if (Math.random() < 0.25 && activities.length > 1) {
+        const act2 = activities.find(a => a.id !== act.id) || act;
+        testEntries.push({
+          date: ds,
+          activity_type: act2.id,
+          duration_min: act2.minDuration + Math.floor(Math.random() * 15),
+          mindful: false,
+        });
+      }
+    }
+
+    // Also add 1 entry for today so Tonight section is populated
+    const todayStr2 = today.toISOString().slice(0, 10);
+    if (!testEntries.some(e => e.date === todayStr2)) {
+      const act = activities[0];
+      testEntries.push({ date: todayStr2, activity_type: act.id, duration_min: act.minDuration + 10, mindful: true });
+    }
+
+    updateData({ entries: testEntries, claimed: [] });
+    setShowDev(false);
+  };
+
+  const clearTestData = () => {
+    updateData({ entries: [], claimed: [] });
+    setShowDev(false);
+  };
+
   const friendlyError = (code) => {
     const map = {
       "auth/email-already-in-use": "An account with this email already exists. Try signing in.",
@@ -1709,7 +1776,9 @@ export default function StarFlow() {
       {/* ── Header ── */}
       <header className="app-header">
         <div>
-          <h1 className="app-title"><span className="title-star">✦</span> Star Flow</h1>
+          <h1 className="app-title" onClick={handleTitleTap} style={{ cursor: "default" }}>
+            <span className="title-star">✦</span> Star Flow
+          </h1>
           <p className="app-date">{now.toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" })}</p>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -1725,6 +1794,30 @@ export default function StarFlow() {
             : <button className="help-btn" onClick={() => setShowSettings(true)} title="Account">↩</button>}
         </div>
       </header>
+
+      {/* ── Dev Mode Panel (triple-tap title to toggle) ── */}
+      {showDev && (
+        <div style={{
+          background: "rgba(255,200,50,0.08)", border: "1px solid rgba(255,200,50,0.25)",
+          borderRadius: 12, padding: "12px 16px", margin: "0 0 16px",
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}>
+          <span style={{ color: P.gold, fontSize: 12, fontWeight: 600 }}>⚙ Dev Mode</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={seedTestData} style={{
+              background: P.nebula, color: P.bg, border: "none", borderRadius: 8,
+              padding: "6px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer",
+            }}>Seed 14 days</button>
+            <button onClick={clearTestData} style={{
+              background: "transparent", color: P.muted, border: `1px solid ${P.dim}`,
+              borderRadius: 8, padding: "6px 12px", fontSize: 11, cursor: "pointer",
+            }}>Clear all</button>
+            <button onClick={() => setShowDev(false)} style={{
+              background: "none", color: P.dim, border: "none", fontSize: 14, cursor: "pointer",
+            }}>×</button>
+          </div>
+        </div>
+      )}
 
       {/* ── Progress Ring ── */}
       <ProgressRing current={stats.pts} target={targets.monthlyTarget} stretch={targets.monthlyStretch} />
