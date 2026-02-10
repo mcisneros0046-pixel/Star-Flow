@@ -1,5 +1,6 @@
+const https = require("https");
+
 module.exports = async function handler(req, res) {
-  // Only allow POST
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -9,26 +10,42 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: "API key not configured" });
   }
 
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const body = JSON.stringify(req.body);
+
+  return new Promise((resolve) => {
+    const options = {
+      hostname: "api.anthropic.com",
+      port: 443,
+      path: "/v1/messages",
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        "Content-Length": Buffer.byteLength(body),
       },
-      body: JSON.stringify(req.body),
+    };
+
+    const apiReq = https.request(options, (apiRes) => {
+      let data = "";
+      apiRes.on("data", (chunk) => { data += chunk; });
+      apiRes.on("end", () => {
+        try {
+          const parsed = JSON.parse(data);
+          res.status(apiRes.statusCode).json(parsed);
+        } catch (e) {
+          res.status(500).json({ error: "Invalid response from AI service", raw: data.slice(0, 200) });
+        }
+        resolve();
+      });
     });
 
-    const data = await response.json();
+    apiReq.on("error", (err) => {
+      res.status(500).json({ error: "Failed to reach AI service", detail: err.message });
+      resolve();
+    });
 
-    if (!response.ok) {
-      return res.status(response.status).json(data);
-    }
-
-    return res.status(200).json(data);
-  } catch (err) {
-    console.error("Anthropic proxy error:", err);
-    return res.status(500).json({ error: "Failed to reach AI service" });
-  }
+    apiReq.write(body);
+    apiReq.end();
+  });
 };
