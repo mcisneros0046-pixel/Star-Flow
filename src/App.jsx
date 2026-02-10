@@ -52,19 +52,16 @@ const ACTIVITY_PRESETS = [
 
 // ─── DEFAULT TARGETS & REWARDS ───────────────────────────────────────────────
 const DEFAULT_TARGETS = {
-  dailyCap: 5,
-  weeklyBronze: 9,
-  weeklySilver: 12,
-  weeklyGold: 15,
-  monthlyTarget: 35,
-  monthlyStretch: 45,
+  targetSessionsPerWeek: 4,
+  weeklyStarTarget: 6,   // round(targetSessionsPerWeek * 1.6)
+  monthlyTarget: 20,
+  monthlyStretch: 28,
 };
 
-const DEFAULT_REWARDS = {
-  bronze: ["Coffee Trip", "Mini Beauty Treat", "Fresh Flowers", "New Book", "Frozen Yogurt"],
-  silver: ["Workout Accessory", "Beauty Treat ($30)", "Movie Night", "Candle", "Spa Day"],
-  gold: ["Nice dinner out", "Shopping Trip ($100)", "Massage or Facial", "Day trip adventure", "New workout gear"],
-};
+const DEFAULT_REWARDS = [
+  "Coffee Trip", "Mini Beauty Treat", "Fresh Flowers", "New Book",
+  "Movie Night", "Candle", "Spa Day", "Day trip adventure",
+];
 
 // ─── COPY & TEXT ─────────────────────────────────────────────────────────────
 const ENCOURAGEMENTS = [
@@ -81,9 +78,7 @@ const ENCOURAGEMENTS = [
 ];
 
 const MILESTONE_COPY = {
-  bronze: "A new constellation is forming.",
-  silver: "Your sky is filling with light.",
-  gold: "A galaxy of your own making.",
+  constellation: "Your constellation is complete. Choose a reward.",
   streak_3: "Three nights glowing — a habit takes shape.",
   streak_7: "A full week of starlight. Powerful.",
   streak_14: "Two weeks luminous. This is who you are now.",
@@ -104,10 +99,10 @@ const NUM_WORDS = {
 // ─── FIREBASE DATA ───────────────────────────────────────────────────────────
 // The new data structure stores everything per user:
 //   profile:    { displayName, onboardingComplete, createdAt }
-//   activities: [ { id, label, color, colorLight, minDuration, baseStars, ... } ]
-//   targets:    { dailyCap, weeklyBronze, weeklySilver, weeklyGold, monthlyTarget, monthlyStretch }
-//   rewards:    { bronze: [...], silver: [...], gold: [...] }
-//   entries:    [ { date, activity_type, duration_min, bonus_flag } ]
+//   activities: [ { id, label, color, colorLight, minDuration } ]
+//   targets:    { targetSessionsPerWeek, weeklyStarTarget, monthlyTarget, monthlyStretch }
+//   rewards:    [ "reward1", "reward2", ... ]
+//   entries:    [ { date, activity_type, duration_min, mindful } ]
 //   claimed:    [ "2026-02-W1", ... ]
 
 async function loadUserData(userId) {
@@ -130,20 +125,19 @@ async function loadUserData(userId) {
 }
 
 function migrateOldData(oldData) {
-  // Convert old entries: intensity_flag/intentional_flag → unified bonus_flag
+  // Convert old entries: intensity_flag/intentional_flag/bonus_flag → mindful
   const migratedEntries = (oldData.entries || []).map(e => ({
     date: e.date,
     activity_type: e.activity_type,
     duration_min: e.duration_min,
-    bonus_flag: e.intensity_flag || e.intentional_flag || false,
+    mindful: e.mindful || e.bonus_flag || e.intensity_flag || e.intentional_flag || false,
   }));
 
   return {
     profile: { displayName: "", onboardingComplete: true, createdAt: new Date().toISOString() },
-    // Keep the original yoga + walk activities so existing data still scores correctly
     activities: ACTIVITY_PRESETS.filter(a => a.id === "yoga" || a.id === "walk"),
     targets: { ...DEFAULT_TARGETS },
-    rewards: { ...DEFAULT_REWARDS },
+    rewards: [...DEFAULT_REWARDS],
     entries: migratedEntries,
     claimed: oldData.claimed || [],
   };
@@ -154,29 +148,85 @@ async function saveUserData(userId, data) {
   catch (err) { console.error("Save error:", err); }
 }
 
-// ─── GENERIC POINT SYSTEM ────────────────────────────────────────────────────
-// This replaces the old hardcoded calcPts. It reads scoring rules from the
-// user's activities config, so any activity type works automatically.
+// ─── SCORING ENGINE ──────────────────────────────────────────────────────────
+// 1 base star per session meeting minimum duration.
+// Presence bonus: +0.5 if mindful (max 1 per day).
+// Reentry multiplier: returning after missed days.
+// Diminishing returns: first efforts each day shine brightest (replaces daily cap).
 
+const REENTRY_TABLE = { 0: 1.0, 1: 1.2, 2: 1.35 }; // 3+ → 1.5
+const PACING_TABLE = { 1: 1.0, 2: 0.7, 3: 0.5 };   // 4+ → 0.35
+
+function reentryMultiplier(missed) { return REENTRY_TABLE[missed] ?? 1.5; }
+function pacingMultiplier(idx) { return PACING_TABLE[idx] ?? 0.35; }
+
+const SESSION_MESSAGES = {
+  reentry: ["Welcome back — the sky remembers you.", "Return light. This counts double.", "The stars waited for you."],
+  presence: ["Presence noted. The glow deepens.", "A mindful moment — rarer than gold.", "Phone down, sky up. Beautiful."],
+  base: ["A star placed. Quietly luminous.", "The sky grows.", "One more light in your constellation."],
+};
+
+function scoreSession(entry, activities, allEntries) {
+  const act = activities.find(a => a.id === entry.activity_type);
+  const empty = { starsEarned: 0, baseStar: 0, presenceBonus: 0, reentryMult: 1, pacingMult: 1, message: "" };
+  if (!act || entry.duration_min < act.minDuration) return empty;
+
+  const baseStar = 1;
+  let presenceBonus = 0;
+  if (entry.mindful) {
+    const otherMindful = allEntries.filter(e =>
+      e.date === entry.date && e !== entry && e.mindful &&
+      e.duration_min >= (activities.find(a => a.id === e.activity_type)?.minDuration || 999)
+    );
+    if (otherMindful.length === 0) presenceBonus = 0.5;
+  }
+
+  const todayBefore = allEntries.filter(e =>
+    e.date === entry.date && allEntries.indexOf(e) < allEntries.indexOf(entry) &&
+    e.duration_min >= (activities.find(a => a.id === e.activity_type)?.minDuration || 999)
+  );
+  const sessionIndex = todayBefore.length + 1;
+  const missedDays = calcMissedDays(entry.date, allEntries, activities);
+  const reentryMult = reentryMultiplier(missedDays);
+  const pacingMult = pacingMultiplier(sessionIndex);
+  const starsEarned = Math.round((baseStar + presenceBonus) * reentryMult * pacingMult * 100) / 100;
+
+  let msgPool = SESSION_MESSAGES.base;
+  if (missedDays >= 1) msgPool = SESSION_MESSAGES.reentry;
+  else if (presenceBonus > 0) msgPool = SESSION_MESSAGES.presence;
+  const message = msgPool[Math.floor(Math.random() * msgPool.length)];
+
+  return { starsEarned, baseStar, presenceBonus, reentryMult, pacingMult, message };
+}
+
+function calcMissedDays(dateStr, allEntries, activities) {
+  const d = new Date(dateStr);
+  let missed = 0;
+  for (let i = 1; i <= 14; i++) {
+    const prev = new Date(d); prev.setDate(prev.getDate() - i);
+    const prevStr = prev.toISOString().slice(0, 10);
+    if (allEntries.some(e => e.date === prevStr && e.duration_min >= (activities.find(a => a.id === e.activity_type)?.minDuration || 999))) break;
+    missed++;
+  }
+  return missed;
+}
+
+// Simplified check: did this entry meet minimum duration?
 function calcPts(entry, activities) {
   const act = activities.find(a => a.id === entry.activity_type);
-  if (!act) return 0;
-  const d = entry.duration_min;
-  // Must meet minimum duration
-  if (d < act.minDuration) return 0;
-  // Two-tier scoring: if midDuration exists and duration meets it, use midStars
-  let stars = act.baseStars;
-  if (act.midDuration && d >= act.midDuration) stars = act.midStars;
-  // Bonus flag adds extra stars
-  if (entry.bonus_flag && act.bonusStars) stars += act.bonusStars;
-  return stars;
+  if (!act || entry.duration_min < act.minDuration) return 0;
+  return 1;
 }
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 function entriesFor(entries, ds) { return entries.filter(e => e.date === ds); }
 
-function dailyPts(entries, ds, activities, dailyCap) {
-  return Math.min(dailyCap, entriesFor(entries, ds).reduce((s, e) => s + calcPts(e, activities), 0));
+function dailyStars(allEntries, ds, activities) {
+  let total = 0;
+  for (const entry of entriesFor(allEntries, ds)) {
+    total += scoreSession(entry, activities, allEntries).starsEarned;
+  }
+  return Math.round(total * 10) / 10;
 }
 
 function weekOfMonth(d) { return Math.ceil(d.getDate() / 7); }
@@ -187,42 +237,33 @@ function weekRange(y, m, wn) {
   return [new Date(y, m - 1, s), new Date(y, m - 1, e)];
 }
 
-function weekPts(entries, y, m, wn, activities, dailyCap) {
+function weekStars(allEntries, y, m, wn, activities) {
   const [s, e] = weekRange(y, m, wn);
   let total = 0; const cur = new Date(s);
   while (cur <= e) {
-    total += dailyPts(entries, cur.toISOString().slice(0, 10), activities, dailyCap);
+    total += dailyStars(allEntries, cur.toISOString().slice(0, 10), activities);
     cur.setDate(cur.getDate() + 1);
   }
-  return total;
+  return Math.round(total * 10) / 10;
 }
 
 function monthStats(entries, y, m, activities, targets) {
   const days = new Date(y, m, 0).getDate();
   let pts = 0;
-  // Count sessions per activity type
-  const actCounts = {};
-  const bonusCounts = {};
-  activities.forEach(a => { actCounts[a.id] = 0; bonusCounts[a.id] = 0; });
-
+  const actCounts = {}, mindfulCounts = {};
+  activities.forEach(a => { actCounts[a.id] = 0; mindfulCounts[a.id] = 0; });
   for (let d = 1; d <= days; d++) {
     const ds = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    const es = entriesFor(entries, ds); let dp = 0;
-    es.forEach(e => {
-      const p = calcPts(e, activities);
-      dp += p;
-      if (p > 0) {
+    pts += dailyStars(entries, ds, activities);
+    entriesFor(entries, ds).forEach(e => {
+      if (calcPts(e, activities) > 0) {
         actCounts[e.activity_type] = (actCounts[e.activity_type] || 0) + 1;
-        if (e.bonus_flag) bonusCounts[e.activity_type] = (bonusCounts[e.activity_type] || 0) + 1;
+        if (e.mindful) mindfulCounts[e.activity_type] = (mindfulCounts[e.activity_type] || 0) + 1;
       }
     });
-    pts += Math.min(targets.dailyCap, dp);
   }
-  return {
-    pts, actCounts, bonusCounts,
-    target: pts >= targets.monthlyTarget,
-    stretch: pts >= targets.monthlyStretch,
-  };
+  pts = Math.round(pts * 10) / 10;
+  return { pts, actCounts, mindfulCounts, target: pts >= targets.monthlyTarget, stretch: pts >= targets.monthlyStretch };
 }
 
 function calcStreak(entries, activities) {
@@ -233,24 +274,7 @@ function calcStreak(entries, activities) {
   return streak;
 }
 
-function topTier(pts, targets) {
-  if (pts >= targets.weeklyGold) return "gold";
-  if (pts >= targets.weeklySilver) return "silver";
-  if (pts >= targets.weeklyBronze) return "bronze";
-  return null;
-}
-
-function availTiers(pts, targets) {
-  const t = [];
-  if (pts >= targets.weeklyBronze) t.push("bronze");
-  if (pts >= targets.weeklySilver) t.push("silver");
-  if (pts >= targets.weeklyGold) t.push("gold");
-  return t;
-}
-
-function tierColor(t) {
-  return { gold: P.tierGold, silver: P.tierSilver, bronze: P.tierBronze }[t] || P.muted;
-}
+function goalMet(pts, targets) { return pts >= targets.weeklyStarTarget; }
 
 function calendarWeeks(y, m) {
   const firstDay = new Date(y, m - 1, 1).getDay();
@@ -323,18 +347,19 @@ function GlassCard({ children, className="", glow=false, glowColor=P.nebula, sty
   );
 }
 
-function TierBar({ name, need, pts, color }) {
-  const hit = pts >= need, pct = Math.min(pts/need, 1);
+function ConstellationBar({ pts, target }) {
+  const pct = target > 0 ? Math.min(pts / target, 1) : 0;
+  const hit = pts >= target;
   return (
     <div className="tier-row">
       <div className="tier-bar-bg">
-        <div className="tier-bar-fill" style={{ width:`${pct*100}%`, background:hit?color:P.btnDark }} />
+        <div className="tier-bar-fill" style={{ width: `${pct * 100}%`, background: hit ? P.gold : `linear-gradient(90deg, ${P.nebula}, ${P.aurora})` }} />
         <div className="tier-bar-text">
-          <span className="tier-award" style={{ color:hit?(pct>0.5?P.bg:color):P.muted }}>
-            ✦ <span style={{ fontWeight:hit?600:400 }}>{name} ({need} stars)</span>
+          <span className="tier-award" style={{ color: hit ? (pct > 0.5 ? P.bg : P.gold) : P.soft }}>
+            ✦ <span style={{ fontWeight: hit ? 600 : 400 }}>Constellation goal</span>
           </span>
-          <span style={{ color:hit?(pct>0.5?P.bg:color):P.muted, fontSize:12 }}>
-            {hit ? "✓" : `${need-pts} to go`}
+          <span style={{ color: hit ? (pct > 0.5 ? P.bg : P.gold) : P.muted, fontSize: 12 }}>
+            {hit ? "✓ Complete" : `${Math.round((target - pts) * 10) / 10} to go`}
           </span>
         </div>
       </div>
@@ -345,22 +370,22 @@ function TierBar({ name, need, pts, color }) {
 // ─── DYNAMIC LOG MODAL ───────────────────────────────────────────────────────
 // Now reads from the user's activities config instead of hardcoded yoga/walk
 
-function LogModal({ onClose, onLog, activities }) {
+function LogModal({ onClose, onLog, activities, allEntries }) {
   const [activityId, setActivityId] = useState(activities[0]?.id || "");
   const [duration, setDuration] = useState(30);
-  const [bonusFlag, setBonusFlag] = useState(false);
+  const [mindful, setMindful] = useState(false);
 
   const act = activities.find(a => a.id === activityId);
-  const preview = act ? calcPts({
-    activity_type: activityId, duration_min: duration, bonus_flag: bonusFlag
-  }, activities) : 0;
+  // Preview: simulate adding this entry
+  const previewEntry = { date: todayStr(), activity_type: activityId, duration_min: duration, mindful };
+  const preview = act ? scoreSession(previewEntry, activities, [...allEntries, previewEntry]) : { starsEarned: 0, message: "" };
 
   const handleLog = () => {
     onLog({
       date: todayStr(),
       activity_type: activityId,
       duration_min: duration,
-      bonus_flag: bonusFlag,
+      mindful,
     });
     onClose();
   };
@@ -373,7 +398,7 @@ function LogModal({ onClose, onLog, activities }) {
         </h2>
         <div style={{ display:"flex", gap:10, justifyContent:"center", marginBottom:20, flexWrap:"wrap" }}>
           {activities.map(a => (
-            <button key={a.id} onClick={() => { setActivityId(a.id); setBonusFlag(false); }}
+            <button key={a.id} onClick={() => { setActivityId(a.id); setMindful(false); }}
               className={`activity-btn ${activityId===a.id ? "active" : ""}`}
               style={{ "--accent": a.color }}>
               <span className="activity-star">✦</span> {a.label}
@@ -387,22 +412,22 @@ function LogModal({ onClose, onLog, activities }) {
           </select>
           <span style={{ color:P.muted, fontSize:14 }}>min</span>
         </div>
-        {act && act.bonusLabel && (
-          <label className="flag-label" style={{ "--accent": act.color }}>
-            <input type="checkbox" checked={bonusFlag} onChange={e => setBonusFlag(e.target.checked)} />
-            <span className="flag-star">✦</span>
-            {act.bonusLabel}
-          </label>
-        )}
+        <label className="flag-label" style={{ "--accent": P.gold }}>
+          <input type="checkbox" checked={mindful} onChange={e => setMindful(e.target.checked)} />
+          <span className="flag-star">✦</span>
+          Mindful session (phone-free / fully present)
+        </label>
         <p style={{ color:P.gold, fontSize:16, fontWeight:600, textAlign:"center", margin:"16px 0" }}>
-          → +{preview} star{preview !== 1 ? "s" : ""}
+          → +{preview.starsEarned} star{preview.starsEarned !== 1 ? "s" : ""}
         </p>
-        {act && (
+        {act && duration < act.minDuration && (
           <p style={{ color:P.muted, fontSize:11, textAlign:"center", marginBottom:8 }}>
-            {act.midDuration
-              ? `${act.minDuration}+ min → ${act.baseStars}★ · ${act.midDuration}+ min → ${act.midStars}★`
-              : `${act.minDuration}+ min → ${act.baseStars}★`}
-            {act.bonusStars ? ` · bonus +${act.bonusStars}★` : ""}
+            {act.label} needs {act.minDuration}+ min to earn a star
+          </p>
+        )}
+        {preview.starsEarned > 0 && (
+          <p style={{ color:P.soft, fontSize:11, textAlign:"center", fontStyle:"italic", marginBottom:8 }}>
+            {preview.message}
           </p>
         )}
         <div style={{ display:"flex", gap:12, justifyContent:"center", marginTop:20 }}>
@@ -416,35 +441,23 @@ function LogModal({ onClose, onLog, activities }) {
 
 // ─── DYNAMIC REWARD MODAL ────────────────────────────────────────────────────
 
-function RewardModal({ wk, avail, rk, onClose, onClaim, rewards, targets }) {
-  const highest = avail[avail.length - 1] || "bronze";
-  const [selected, setSelected] = useState(`${highest}:${rewards[highest]?.[0] || ""}`);
+function RewardModal({ wk, rk, onClose, onClaim, rewards }) {
+  const rewardList = Array.isArray(rewards) ? rewards : DEFAULT_REWARDS;
+  const [selected, setSelected] = useState(rewardList[0] || "");
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content modal-reward" onClick={e => e.stopPropagation()}>
         <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:24, fontWeight:600 }}>
-          Select a Little Joy
+          Choose a Little Joy
         </h2>
-        <p style={{ color:P.soft, fontSize:13, marginBottom:20 }}>Week {wk}</p>
-        {["gold","silver","bronze"].map(tier => {
-          const ok = avail.includes(tier);
-          const need = tier === "gold" ? targets.weeklyGold : tier === "silver" ? targets.weeklySilver : targets.weeklyBronze;
-          const tierRewards = rewards[tier] || [];
-          return (
-            <div key={tier} style={{ marginBottom:16 }}>
-              <p style={{ color:ok?tierColor(tier):P.dim, fontWeight:600, fontSize:14, marginBottom:6 }}>
-                ✦ {tier.toUpperCase()} ({need}+ stars) {!ok && "🔒"}
-              </p>
-              {tierRewards.map(rw => (
-                <label key={rw} className="reward-option" style={{ opacity:ok?1:0.35, pointerEvents:ok?"auto":"none" }}>
-                  <input type="radio" name="reward" value={`${tier}:${rw}`}
-                    checked={selected === `${tier}:${rw}`} onChange={() => setSelected(`${tier}:${rw}`)} />
-                  <span style={{ color:P.text, fontSize:13 }}>{rw}</span>
-                </label>
-              ))}
-            </div>
-          );
-        })}
+        <p style={{ color:P.soft, fontSize:13, marginBottom:20 }}>Week {wk} — constellation complete</p>
+        {rewardList.map(rw => (
+          <label key={rw} className="reward-option">
+            <input type="radio" name="reward" value={rw}
+              checked={selected === rw} onChange={() => setSelected(rw)} />
+            <span style={{ color:P.text, fontSize:13 }}>{rw}</span>
+          </label>
+        ))}
         <div style={{ display:"flex", gap:12, justifyContent:"center", marginTop:20 }}>
           <button className="btn-primary" onClick={() => { onClaim(rk, selected); onClose(); }}>✦ Receive Your Star</button>
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
@@ -454,13 +467,13 @@ function RewardModal({ wk, avail, rk, onClose, onClaim, rewards, targets }) {
   );
 }
 
-function CelebrateModal({ tier, reward, onClose }) {
+function CelebrateModal({ reward, onClose }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={e => e.stopPropagation()} style={{ textAlign:"center" }}>
         <div className="celebrate-burst">✦</div>
-        <p style={{ color:tierColor(tier), fontWeight:700, fontSize:18, fontFamily:"'Cormorant Garamond', Georgia, serif" }}>
-          {tier.toUpperCase()}
+        <p style={{ color:P.gold, fontWeight:700, fontSize:18, fontFamily:"'Cormorant Garamond', Georgia, serif" }}>
+          Constellation Complete
         </p>
         <p style={{ color:P.gold, fontSize:16, fontWeight:600, margin:"16px 0" }}>{reward}</p>
         <p style={{ color:P.soft, fontStyle:"italic", fontFamily:"'Cormorant Garamond', Georgia, serif" }}>
@@ -601,7 +614,7 @@ function OnboardingWizard({ user, onComplete }) {
   // AI-generated plan
   const [generatedActivities, setGeneratedActivities] = useState([]);
   const [generatedTargets, setGeneratedTargets] = useState({ ...DEFAULT_TARGETS });
-  const [generatedRewards, setGeneratedRewards] = useState({ ...DEFAULT_REWARDS });
+  const [generatedRewards, setGeneratedRewards] = useState([...DEFAULT_REWARDS]);
   const [aiExplanation, setAiExplanation] = useState("");
 
   const totalQuestions = ONBOARD_QUESTIONS.length;
@@ -691,20 +704,27 @@ USER NAME: ${displayName}
 FULL ASSESSMENT:
 ${answersText}
 
-SELECTED ACTIVITY PRESETS (use these as base templates — adjust scoring based on answers):
+SELECTED ACTIVITY PRESETS (use these as base templates):
 ${JSON.stringify(selectedPresets.map(a => ({ id: a.id, label: a.label, color: a.color, colorLight: a.colorLight })), null, 2)}
 
 CRITICAL GUIDELINES BASED ON THEIR ANSWERS:
 - Movement feeling "${answers.movement_feeling || ""}" → adjust difficulty & encouragement style
-- Past friction: "${(answers.past_friction || []).join(", ")}" → remove those barriers in the scoring
-- Current baseline "${answers.current_baseline || ""}" → calibrate minimum durations & star thresholds
+- Past friction: "${(answers.past_friction || []).join(", ")}" → remove those barriers
+- Current baseline "${answers.current_baseline || ""}" → calibrate minimum durations
 - Time realism "${answers.time_realism || ""}" → set minDuration to fit their schedule
-- Goal focus "${answers.goal_focus || ""}" → weight the scoring toward their priority
-- Motivation style "${answers.motivation_style || ""}" → shape how points accumulate
+- Goal focus "${answers.goal_focus || ""}" → weight toward their priority
+- Motivation style "${answers.motivation_style || ""}" → shape encouragement
 - Reward preferences: "${(answers.reward_types || []).join(", ")}" → personalize reward suggestions
 - Tone preference "${answers.tone_preference || ""}" → inform the explanation voice
 - Boundaries: "${(answers.boundaries || []).join(", ")}" → NEVER include these in rewards or language
-- Tracking comfort "${answers.tracking_comfort || ""}" → simpler scoring for minimal trackers
+- Tracking comfort "${answers.tracking_comfort || ""}" → simpler setup for minimal trackers
+
+THE SCORING MODEL (do NOT change this, it is built into the app):
+- Each session earns exactly 1 base star if it meets the activity's minDuration
+- Presence bonus: +0.5 star if the session is mindful/phone-free (max 1 per day)
+- Reentry bonus: multiplier for returning after missed days (1.2x after 1 day, 1.5x after 3+)
+- Pacing: diminishing returns for multiple sessions per day (no daily cap)
+- There are NO tiers (no bronze/silver/gold). Just a single weekly constellation goal.
 
 Respond with ONLY a JSON object (no markdown, no backticks, no explanation outside JSON):
 {
@@ -714,40 +734,34 @@ Respond with ONLY a JSON object (no markdown, no backticks, no explanation outsi
       "label": "Activity Name",
       "color": "#hex",
       "colorLight": "rgba(...)",
-      "minDuration": 20,
-      "baseStars": 1,
-      "midDuration": 40,
-      "midStars": 2,
-      "bonusLabel": "Specific bonus description",
-      "bonusStars": 1
+      "minDuration": 20
     }
   ],
   "targets": {
-    "dailyCap": 5,
-    "weeklyBronze": 8,
-    "weeklySilver": 11,
-    "weeklyGold": 14,
-    "monthlyTarget": 30,
-    "monthlyStretch": 42
+    "targetSessionsPerWeek": 4,
+    "weeklyStarTarget": 6,
+    "monthlyTarget": 22,
+    "monthlyStretch": 30
   },
-  "rewards": {
-    "bronze": ["reward1", "reward2", "reward3", "reward4", "reward5"],
-    "silver": ["reward1", "reward2", "reward3", "reward4", "reward5"],
-    "gold": ["reward1", "reward2", "reward3", "reward4", "reward5"]
-  },
+  "rewards": ["reward1", "reward2", "reward3", "reward4", "reward5", "reward6", "reward7", "reward8"],
   "explanation": "A warm 2-3 sentence explanation of why you designed this plan this way, addressing ${displayName} by name. Match the tone they selected: ${answers.tone_preference || "calm and neutral"}."
 }
 
-SCORING RULES:
-- "Rarely or just starting" → very low minDuration (10-15min), generous stars
-- "5 or more days per week" → higher thresholds, more tiers
-- "5–10 minutes" time realism → minDuration of 5-10, no second tier
-- "45 minutes or more" → include midDuration tiers
-- If they chose "Only if it's simple" tracking → fewer tiers, simpler bonuses
-- Weekly Bronze must be very reachable based on their baseline
-- Rewards must match their reward_types and NEVER violate boundaries
-- If boundaries include "Weight" → no weight-related rewards
-- If boundaries include "Calories" → no calorie/food-restriction rewards`;
+RULES FOR ACTIVITY minDuration:
+- "Rarely or just starting" → very low (5-15min)
+- "5 or more days per week" → moderate (20-30min)
+- "5–10 minutes" time realism → 5-10min
+- "45 minutes or more" → 30-45min
+
+RULES FOR TARGETS:
+- targetSessionsPerWeek: 2-5 based on their baseline
+- weeklyStarTarget = round(targetSessionsPerWeek * 1.6) — must be very reachable
+- monthlyTarget and monthlyStretch should feel achievable, not stressful
+
+RULES FOR REWARDS (flat list of 6-8 items):
+- Match their reward_types preferences
+- Mix small treats and bigger experiences
+- NEVER violate boundaries (weight, calories, etc.)`;
 
     try {
       const response = await fetch("/api/generate-plan", {
@@ -775,7 +789,7 @@ SCORING RULES:
 
       setGeneratedActivities(parsed.activities || []);
       setGeneratedTargets(parsed.targets || { ...DEFAULT_TARGETS });
-      setGeneratedRewards(parsed.rewards || { ...DEFAULT_REWARDS });
+      setGeneratedRewards(Array.isArray(parsed.rewards) ? parsed.rewards : [...DEFAULT_REWARDS]);
       setAiExplanation(parsed.explanation || "Your personalized plan is ready.");
       setPhase("review");
     } catch (err) {
@@ -784,7 +798,7 @@ SCORING RULES:
       // Fall back to presets
       setGeneratedActivities(selectedPresets.map(p => ({ ...p })));
       setGeneratedTargets({ ...DEFAULT_TARGETS });
-      setGeneratedRewards({ ...DEFAULT_REWARDS });
+      setGeneratedRewards([...DEFAULT_REWARDS]);
       setAiExplanation("");
       setPhase("review");
     }
@@ -792,18 +806,18 @@ SCORING RULES:
   };
 
   // Update rewards on review screen
-  const updateReward = (tier, idx, value) => {
+  const updateReward = (idx, value) => {
     setGeneratedRewards(prev => {
-      const next = { ...prev, [tier]: [...prev[tier]] };
-      next[tier][idx] = value;
+      const next = [...prev];
+      next[idx] = value;
       return next;
     });
   };
-  const addReward = (tier) => {
-    setGeneratedRewards(prev => ({ ...prev, [tier]: [...prev[tier], ""] }));
+  const addReward = () => {
+    setGeneratedRewards(prev => [...prev, ""]);
   };
-  const removeReward = (tier, idx) => {
-    setGeneratedRewards(prev => ({ ...prev, [tier]: prev[tier].filter((_, i) => i !== idx) }));
+  const removeReward = (idx) => {
+    setGeneratedRewards(prev => prev.filter((_, i) => i !== idx));
   };
 
   // Final save
@@ -817,11 +831,7 @@ SCORING RULES:
       },
       activities: generatedActivities,
       targets: generatedTargets,
-      rewards: {
-        bronze: generatedRewards.bronze.filter(r => r.trim()),
-        silver: generatedRewards.silver.filter(r => r.trim()),
-        gold: generatedRewards.gold.filter(r => r.trim()),
-      },
+      rewards: generatedRewards.filter(r => r.trim()),
       entries: [],
       claimed: [],
     };
@@ -945,46 +955,52 @@ SCORING RULES:
               </p>
             )}
 
-            {/* Activity Scoring */}
-            <h3 className="review-section-title">✦ Scoring Rules</h3>
+            {/* How Starlight Works */}
+            <h3 className="review-section-title">✦ How Starlight Works</h3>
+            <GlassCard className="section-card" style={{ marginBottom: 8 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <p style={{ color: P.aurora, fontWeight: 600, fontSize: 13 }}>✦ Show Up</p>
+                  <p style={{ color: P.soft, fontSize: 12 }}>Any intentional movement earns 1 star when you meet the minimum time.</p>
+                </div>
+                <div>
+                  <p style={{ color: P.gold, fontWeight: 600, fontSize: 13 }}>✦ Add Presence</p>
+                  <p style={{ color: P.soft, fontSize: 12 }}>Phone-free or fully focused adds a presence glow (+0.5 star, once per day).</p>
+                </div>
+                <div>
+                  <p style={{ color: P.nebula, fontWeight: 600, fontSize: 13 }}>✦ Return Light</p>
+                  <p style={{ color: P.soft, fontSize: 12 }}>Coming back after a pause makes your next star shine brighter.</p>
+                </div>
+                <p style={{ color: P.muted, fontSize: 11, fontStyle: "italic", marginTop: 4 }}>
+                  Soft pacing: first efforts each day shine brightest. More sessions still count with gentler glow.
+                </p>
+              </div>
+            </GlassCard>
+
+            {/* Activities & Minimum Durations */}
+            <h3 className="review-section-title" style={{ marginTop: 16 }}>☽ Your Activities</h3>
             {generatedActivities.map(act => (
               <GlassCard key={act.id} className="section-card" style={{ marginBottom: 8 }}>
-                <h4 style={{ color: act.color, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 17, marginBottom: 8 }}>
-                  ✦ {act.label}
-                </h4>
-                <div className="review-rules">
-                  <p style={{ color: P.text, fontSize: 13 }}>
-                    {act.minDuration}+ min → {act.baseStars} star{act.baseStars !== 1 ? "s" : ""}
-                    {act.midDuration && ` · ${act.midDuration}+ min → ${act.midStars} star${act.midStars !== 1 ? "s" : ""}`}
-                  </p>
-                  {act.bonusStars > 0 && (
-                    <p style={{ color: P.gold, fontSize: 12, marginTop: 4 }}>
-                      ✦ {act.bonusLabel} → +{act.bonusStars} bonus star{act.bonusStars !== 1 ? "s" : ""}
-                    </p>
-                  )}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <h4 style={{ color: act.color, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 17 }}>
+                    ✦ {act.label}
+                  </h4>
+                  <span style={{ color: P.soft, fontSize: 13 }}>{act.minDuration}+ min</span>
                 </div>
               </GlassCard>
             ))}
 
-            {/* Targets */}
-            <h3 className="review-section-title" style={{ marginTop: 16 }}>☽ Weekly & Monthly Goals</h3>
+            {/* Constellation Goal */}
+            <h3 className="review-section-title" style={{ marginTop: 16 }}>✦ Constellation Goal</h3>
             <GlassCard className="section-card">
               <div className="review-targets">
                 <div className="review-target-row">
-                  <span style={{ color: P.soft }}>Daily cap</span>
-                  <span style={{ color: P.gold, fontWeight: 600 }}>{generatedTargets.dailyCap} stars</span>
+                  <span style={{ color: P.soft }}>Weekly goal</span>
+                  <span style={{ color: P.gold, fontWeight: 600 }}>{generatedTargets.weeklyStarTarget} stars</span>
                 </div>
                 <div className="review-target-row">
-                  <span style={{ color: P.tierBronze }}>✦ Bronze</span>
-                  <span style={{ color: P.text }}>{generatedTargets.weeklyBronze}+ / week</span>
-                </div>
-                <div className="review-target-row">
-                  <span style={{ color: P.tierSilver }}>✦ Silver</span>
-                  <span style={{ color: P.text }}>{generatedTargets.weeklySilver}+ / week</span>
-                </div>
-                <div className="review-target-row">
-                  <span style={{ color: P.tierGold }}>✦ Gold</span>
-                  <span style={{ color: P.text }}>{generatedTargets.weeklyGold}+ / week</span>
+                  <span style={{ color: P.soft }}>Sessions per week</span>
+                  <span style={{ color: P.text }}>{generatedTargets.targetSessionsPerWeek}×</span>
                 </div>
                 <div className="divider" />
                 <div className="review-target-row">
@@ -998,25 +1014,23 @@ SCORING RULES:
               </div>
             </GlassCard>
 
-            {/* Rewards */}
+            {/* Rewards (flat list) */}
             <h3 className="review-section-title" style={{ marginTop: 16 }}>★ Your Rewards</h3>
-            {["bronze", "silver", "gold"].map(tier => (
-              <GlassCard key={tier} className="section-card" style={{ marginBottom: 8 }}>
-                <h4 style={{ color: tierColor(tier), fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, marginBottom: 8 }}>
-                  ✦ {tier.charAt(0).toUpperCase() + tier.slice(1)}
-                </h4>
-                {(generatedRewards[tier] || []).map((rw, idx) => (
-                  <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 5, alignItems: "center" }}>
-                    <input type="text" value={rw} onChange={e => updateReward(tier, idx, e.target.value)}
-                      className="onboard-input" style={{ flex: 1, fontSize: 12, padding: "7px 11px" }} />
-                    <button onClick={() => removeReward(tier, idx)}
-                      style={{ color: P.muted, fontSize: 16, background: "none", border: "none", cursor: "pointer", padding: "0 4px" }}>×</button>
-                  </div>
-                ))}
-                <button className="btn-ghost" onClick={() => addReward(tier)}
-                  style={{ fontSize: 11, color: tierColor(tier), padding: "2px 0" }}>+ Add reward</button>
-              </GlassCard>
-            ))}
+            <GlassCard className="section-card" style={{ marginBottom: 8 }}>
+              <p style={{ color: P.soft, fontSize: 12, marginBottom: 10 }}>
+                When you reach your weekly constellation goal, choose one:
+              </p>
+              {generatedRewards.map((rw, idx) => (
+                <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 5, alignItems: "center" }}>
+                  <input type="text" value={rw} onChange={e => updateReward(idx, e.target.value)}
+                    className="onboard-input" style={{ flex: 1, fontSize: 12, padding: "7px 11px" }} />
+                  <button onClick={() => removeReward(idx)}
+                    style={{ color: P.muted, fontSize: 16, background: "none", border: "none", cursor: "pointer", padding: "0 4px" }}>×</button>
+                </div>
+              ))}
+              <button className="btn-ghost" onClick={() => addReward()}
+                style={{ fontSize: 11, color: P.gold, padding: "2px 0" }}>+ Add reward</button>
+            </GlassCard>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 24, alignItems: "center" }}>
               <button className="btn-primary btn-large" onClick={handleLaunch}>✦ Launch Your Sky</button>
@@ -1520,8 +1534,7 @@ export default function StarFlow() {
   };
   const claimReward = (rk, sel) => {
     updateData({ claimed: [...claimed, rk] });
-    const [tier, reward] = sel.split(":", 2);
-    setCelebrate({ tier, reward });
+    setCelebrate({ reward: sel });
   };
   const unclaim = (rk) => {
     updateData({ claimed: claimed.filter(c => c !== rk) });
@@ -1567,30 +1580,30 @@ export default function StarFlow() {
   // ── Computed values (all dynamic from user config) ──
   const now = new Date(), today = todayStr(), cw = weekOfMonth(now);
   const stats = monthStats(entries, viewYear, viewMonth, activities, targets);
-  const wp = weekPts(entries, now.getFullYear(), now.getMonth() + 1, cw, activities, targets.dailyCap);
+  const wp = weekStars(entries, now.getFullYear(), now.getMonth() + 1, cw, activities);
   const streak = calcStreak(entries, activities);
   const todayEntries = entriesFor(entries, today);
-  const todayPtsVal = dailyPts(entries, today, activities, targets.dailyCap);
-  const tier = topTier(wp, targets);
+  const todayStarsVal = dailyStars(entries, today, activities);
+  const goalHit = wp >= targets.weeklyStarTarget;
   const numWeeks = Math.ceil(new Date(viewYear, viewMonth, 0).getDate() / 7);
   const isCurrentMonth = viewYear === now.getFullYear() && viewMonth === now.getMonth() + 1;
 
   let milestone = "";
   if (stats.stretch) milestone = MILESTONE_COPY.monthly_stretch;
   else if (stats.target) milestone = MILESTONE_COPY.monthly_target;
-  else if (tier && MILESTONE_COPY[tier]) milestone = MILESTONE_COPY[tier];
+  else if (goalHit) milestone = MILESTONE_COPY.constellation || "Your constellation is taking shape.";
   else if (streak >= 14) milestone = MILESTONE_COPY.streak_14;
   else if (streak >= 7) milestone = MILESTONE_COPY.streak_7;
   else if (streak >= 3) milestone = MILESTONE_COPY.streak_3;
 
   let peekText = "";
-  if (!tier) {
-    peekText = `${targets.weeklyBronze - wp} stars from a weekend gift`;
+  if (!goalHit) {
+    const remaining = Math.round((targets.weeklyStarTarget - wp) * 10) / 10;
+    peekText = `${remaining} stars from your constellation goal`;
   } else {
-    const at = availTiers(wp, targets), h = at[at.length-1] || "bronze";
-    const tierRewards = rewards[h] || [];
-    const sample = tierRewards[Math.floor(Math.random() * tierRewards.length)] || "a reward";
-    peekText = `Unlocked — perhaps: ${sample}`;
+    const rewardList = Array.isArray(rewards) ? rewards : DEFAULT_REWARDS;
+    const sample = rewardList[Math.floor(Math.random() * rewardList.length)] || "a reward";
+    peekText = `Goal reached — perhaps: ${sample}`;
   }
 
   const prevMonth = () => { if (viewMonth === 1) { setViewMonth(12); setViewYear(viewYear - 1); } else setViewMonth(viewMonth - 1); };
@@ -1641,7 +1654,7 @@ export default function StarFlow() {
             const es = entriesFor(entries, ds);
             const hasAct = es.some(e => calcPts(e, activities) > 0);
             const isToday = isCurrentMonth && day === now.getDate();
-            const dp = dailyPts(entries, ds, activities, targets.dailyCap);
+            const dp = dailyStars(entries, ds, activities);
 
             // Build dots dynamically from user's activities
             const dotCounts = {};
@@ -1675,8 +1688,8 @@ export default function StarFlow() {
         <p style={{ textAlign:"center", color:P.soft, fontSize:12, marginTop:4, paddingBottom:10 }}>
           {activities.map(act => {
             const count = stats.actCounts[act.id] || 0;
-            const bonus = stats.bonusCounts[act.id] || 0;
-            return `${count} ${act.label.toLowerCase()}${bonus ? ` (${bonus}✦)` : ""}`;
+            const mindful = stats.mindfulCounts?.[act.id] || 0;
+            return `${count} ${act.label.toLowerCase()}${mindful ? ` (${mindful}✦)` : ""}`;
           }).join(" · ")}
         </p>
       </GlassCard>
@@ -1685,13 +1698,13 @@ export default function StarFlow() {
       <GlassCard className="section-card">
         <div className="card-header">
           <h3 className="card-title">Tonight</h3>
-          <span className="card-pts" style={{ color:P.gold }}>{todayPtsVal} stars</span>
+          <span className="card-pts" style={{ color:P.gold }}>{todayStarsVal} stars</span>
         </div>
         {todayEntries.length === 0
           ? <p className="empty-state">The sky is quiet tonight. Your first star is waiting.</p>
           : todayEntries.map((entry, i) => {
               const act = activities.find(a => a.id === entry.activity_type);
-              const pts = calcPts(entry, activities);
+              const result = scoreSession(entry, activities, entries);
               const accent = act?.color || P.nebula;
               const bgLight = act?.colorLight || P.glass;
               return (
@@ -1699,10 +1712,10 @@ export default function StarFlow() {
                   <div className="entry-left">
                     <span style={{ color: accent }}>✦</span>
                     <span className="entry-name">{act?.label || entry.activity_type} · {entry.duration_min} min</span>
-                    {entry.bonus_flag && <span className="bonus-star" style={{ color:P.gold }}>✦</span>}
+                    {entry.mindful && <span className="bonus-star" style={{ color:P.gold }}>✦</span>}
                   </div>
                   <div className="entry-right">
-                    <span style={{ color: accent, fontWeight:600 }}>+{pts}</span>
+                    <span style={{ color: accent, fontWeight:600 }}>+{result.starsEarned}</span>
                     <button className="del-btn" onClick={() => delEntry(i)}>×</button>
                   </div>
                 </div>
@@ -1715,19 +1728,17 @@ export default function StarFlow() {
       <GlassCard className="section-card">
         <div className="card-header">
           <h3 className="card-title">Week {cw}</h3>
-          <span className="card-pts" style={{ color:P.nebula }}>{wp} / {targets.weeklyBronze}</span>
+          <span className="card-pts" style={{ color:P.nebula }}>{wp} / {targets.weeklyStarTarget}</span>
         </div>
         {streak > 0
-          ? <p style={{ color:P.gold, fontSize:13, marginBottom:6 }}>🔥 {streak}-night glow</p>
+          ? <p style={{ color:P.gold, fontSize:13, marginBottom:6 }}>✦ {streak}-night glow</p>
           : <p style={{ color:P.soft, fontSize:13, marginBottom:6 }}>Every star counts, even small ones.</p>}
         {milestone && <p className="milestone">{milestone}</p>}
         <div className="divider" />
-        <p style={{ color:P.soft, fontSize:12, fontWeight:600, marginBottom:8 }}>Constellation Progress</p>
-        <TierBar name="Bronze" need={targets.weeklyBronze} pts={wp} color={P.tierBronze} />
-        <TierBar name="Silver" need={targets.weeklySilver} pts={wp} color={P.tierSilver} />
-        <TierBar name="Gold" need={targets.weeklyGold} pts={wp} color={P.tierGold} />
+        <p style={{ color:P.soft, fontSize:12, fontWeight:600, marginBottom:8 }}>Constellation Goal</p>
+        <ConstellationBar pts={wp} target={targets.weeklyStarTarget} />
         <p style={{ color:P.soft, fontSize:12, marginTop:12 }}>
-          {tier ? `✦ ${peekText}` : `☽ ${peekText}`}
+          {goalHit ? `✦ ${peekText}` : `☽ ${peekText}`}
         </p>
       </GlassCard>
 
@@ -1737,15 +1748,15 @@ export default function StarFlow() {
       </div>
       <div className="week-pills">
         {Array.from({ length: numWeeks }, (_, i) => i + 1).map(wk => {
-          const wkPts = weekPts(entries, viewYear, viewMonth, wk, activities, targets.dailyCap);
-          const wkTier = topTier(wkPts, targets);
+          const wkPts = weekStars(entries, viewYear, viewMonth, wk, activities);
+          const wkGoal = wkPts >= targets.weeklyStarTarget;
           const isCur = isCurrentMonth && wk === cw;
           return (
             <GlassCard key={wk} className={`week-pill ${isCur ? "current" : ""}`} glow={isCur} glowColor={P.nebula}>
               <span className="wp-label">W{wk}</span>
               <span className="wp-pts">{wkPts}</span>
-              {wkTier
-                ? <span className="wp-tier" style={{ color: tierColor(wkTier) }}>✦</span>
+              {wkGoal
+                ? <span className="wp-tier" style={{ color: P.gold }}>✦</span>
                 : <span className="wp-tier" style={{ color: P.dim }}>·</span>}
             </GlassCard>
           );
@@ -1758,8 +1769,8 @@ export default function StarFlow() {
         <span style={{ color:P.muted, fontSize:12 }}>Fri – Sun</span>
       </div>
       {Array.from({ length: numWeeks }, (_, i) => i + 1).map(wk => {
-        const wkPts = weekPts(entries, viewYear, viewMonth, wk, activities, targets.dailyCap);
-        const avail = availTiers(wkPts, targets), tt = topTier(wkPts, targets);
+        const wkPts = weekStars(entries, viewYear, viewMonth, wk, activities);
+        const wkGoal = wkPts >= targets.weeklyStarTarget;
         const rk = `${viewYear}-${String(viewMonth).padStart(2,"0")}-W${wk}`, isClaimed = claimed.includes(rk);
         const fri = fridayOf(viewYear, viewMonth, wk), sun = sundayOf(viewYear, viewMonth, wk), unlocked = new Date() >= fri;
         const dateLabel = `Week ${wk} · ${fri.toLocaleDateString("en-US",{month:"short",day:"numeric"})}–${sun.getDate()}`;
@@ -1767,19 +1778,19 @@ export default function StarFlow() {
           <GlassCard key={rk} className="section-card reward-row">
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <span style={{ color:P.text, fontSize:13 }}>{dateLabel}</span>
-              {!avail.length
-                ? <span style={{ color:P.dim, fontSize:12 }}>{targets.weeklyBronze - wkPts} stars away</span>
+              {!wkGoal
+                ? <span style={{ color:P.dim, fontSize:12 }}>{Math.round((targets.weeklyStarTarget - wkPts) * 10) / 10} stars away</span>
                 : !unlocked
                   ? <span style={{ color:P.dim, fontSize:12 }}>🔒 Fri–Sun</span>
                   : isClaimed
                     ? <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                        <span style={{ color:P.nebula, fontSize:13 }}>{tt && "✦ "}Received</span>
+                        <span style={{ color:P.nebula, fontSize:13 }}>✦ Received</span>
                         <button className="btn-ghost" style={{ fontSize:11, padding:"2px 8px" }} onClick={() => unclaim(rk)}>undo</button>
                       </div>
                     : <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                        {avail.map(t => <span key={t} style={{ color:tierColor(t), fontSize:14 }}>✦</span>)}
+                        <span style={{ color: P.gold, fontSize:14 }}>✦</span>
                         <button className="btn-primary" style={{ fontSize:12, padding:"4px 14px" }}
-                          onClick={() => setRewardModal({ wk, avail, rk })}>Receive</button>
+                          onClick={() => setRewardModal({ wk, rk })}>Receive</button>
                       </div>
               }
             </div>
@@ -1791,52 +1802,45 @@ export default function StarFlow() {
     </div>
 
     {/* ── Modals ── */}
-    {showLog && <LogModal onClose={() => setShowLog(false)} onLog={addEntry} activities={activities} />}
+    {showLog && <LogModal onClose={() => setShowLog(false)} onLog={addEntry} activities={activities} allEntries={entries} />}
     {rewardModal && <RewardModal {...rewardModal} onClose={() => setRewardModal(null)}
-      onClaim={(rk, sel) => claimReward(rk, sel)} rewards={rewards} targets={targets} />}
+      onClaim={(rk, sel) => claimReward(rk, sel)} rewards={rewards} />}
     {celebrate && <CelebrateModal {...celebrate} onClose={() => setCelebrate(null)} />}
 
-    {/* ── How Stars Work Guide (dynamic) ── */}
+    {/* ── How Starlight Works ── */}
     {showGuide && (
       <div className="modal-overlay" onClick={() => setShowGuide(false)}>
         <div className="modal-content modal-reward" onClick={e => e.stopPropagation()}>
           <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:22 }}>
-            How Stars Work
+            How Starlight Works
           </h2>
           <div style={{ textAlign:"left", marginTop:16 }}>
-            {activities.map(act => (
-              <div key={act.id} style={{ marginBottom:10 }}>
-                <p style={{ color:act.color, fontWeight:600, fontSize:14 }}>✦ {act.label.toUpperCase()}</p>
-                {act.midDuration ? (
-                  <>
-                    <p style={{ color:P.text, fontSize:12, margin:"2px 0 2px 16px" }}>
-                      {act.minDuration}–{act.midDuration - 1} min → {act.baseStars} star{act.baseStars !== 1 ? "s" : ""}
-                    </p>
-                    <p style={{ color:P.text, fontSize:12, margin:"2px 0 2px 16px" }}>
-                      {act.midDuration}+ min → {act.midStars} star{act.midStars !== 1 ? "s" : ""}
-                    </p>
-                  </>
-                ) : (
-                  <p style={{ color:P.text, fontSize:12, margin:"2px 0 2px 16px" }}>
-                    {act.minDuration}+ min → {act.baseStars} star{act.baseStars !== 1 ? "s" : ""}
-                  </p>
-                )}
-                {act.bonusStars > 0 && (
-                  <p style={{ color:P.text, fontSize:12, margin:"2px 0 2px 16px" }}>
-                    + {act.bonusLabel} → +{act.bonusStars} star{act.bonusStars !== 1 ? "s" : ""}
-                  </p>
-                )}
-              </div>
-            ))}
+            <div style={{ background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:14, padding:14, marginBottom:10 }}>
+              <p style={{ color:P.aurora, fontWeight:600, fontSize:14, marginBottom:4 }}>✦ Show Up</p>
+              <p style={{ color:P.soft, fontSize:12, lineHeight:1.5 }}>
+                Any intentional movement counts. Meet the minimum for your activity and a star appears in your sky.
+              </p>
+            </div>
+            <div style={{ background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:14, padding:14, marginBottom:10 }}>
+              <p style={{ color:P.gold, fontWeight:600, fontSize:14, marginBottom:4 }}>✦ Add Presence</p>
+              <p style={{ color:P.soft, fontSize:12, lineHeight:1.5 }}>
+                Phone-free or fully focused? That extra attention earns a presence glow — once per day, it deepens your star.
+              </p>
+            </div>
+            <div style={{ background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:14, padding:14, marginBottom:10 }}>
+              <p style={{ color:P.nebula, fontWeight:600, fontSize:14, marginBottom:4 }}>✦ Return Light</p>
+              <p style={{ color:P.soft, fontSize:12, lineHeight:1.5 }}>
+                Coming back after a pause? Your return is celebrated, not punished. Missed days make your next star shine brighter.
+              </p>
+            </div>
             <div className="divider" />
-            <p style={{ color:P.text, fontWeight:600, fontSize:14 }}>Goals</p>
-            <p style={{ color:P.soft, fontSize:12, margin:"2px 0 2px 16px" }}>
-              Daily cap: {targets.dailyCap} · Weekly: {targets.weeklyBronze} · Monthly: {targets.monthlyTarget} · Stretch: {targets.monthlyStretch}
+            <p style={{ color:P.muted, fontSize:11, fontStyle:"italic", lineHeight:1.6 }}>
+              Soft pacing: your first effort each day shines brightest. More sessions still count — with a gentler glow.
+              There's no daily cap. Just natural rhythm.
             </p>
             <div className="divider" />
-            <p style={{ color:P.text, fontWeight:600, fontSize:14 }}>Constellations</p>
-            <p style={{ color:P.soft, fontSize:12, margin:"2px 0 2px 16px" }}>
-              Bronze: {targets.weeklyBronze}+ · Silver: {targets.weeklySilver}+ · Gold: {targets.weeklyGold}+ stars per week
+            <p style={{ color:P.soft, fontSize:12, marginTop:4 }}>
+              Weekly constellation goal: <span style={{ color:P.gold }}>{targets.weeklyStarTarget} stars</span> · Monthly: <span style={{ color:P.nebula }}>{targets.monthlyTarget}</span> · Stretch: <span style={{ color:P.gold }}>{targets.monthlyStretch}</span>
             </p>
           </div>
           <button className="btn-primary" onClick={() => setShowGuide(false)} style={{ marginTop:20 }}>I understand</button>
