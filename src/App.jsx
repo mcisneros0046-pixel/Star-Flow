@@ -72,14 +72,14 @@ const ENCOURAGEMENTS = [
   "Rest is part of the cosmos.",
   "Growth isn't always visible — like stars at dawn.",
   "You're weaving something luminous.",
-  "Gentle with yourself tonight.",
+  "Gentle with yourself today.",
   "Every moment of movement is a star placed.",
   "This is quiet healing in motion.",
 ];
 
 const MILESTONE_COPY = {
   constellation: "Your constellation is complete. Choose a reward.",
-  streak_3: "Three nights glowing — a habit takes shape.",
+  streak_3: "Three days glowing — a habit takes shape.",
   streak_7: "A full week of starlight. Powerful.",
   streak_14: "Two weeks luminous. This is who you are now.",
   monthly_target: "Monthly constellation complete — celebrate.",
@@ -378,23 +378,22 @@ function ConstellationBar({ pts, target }) {
 
 function LogModal({ onClose, onLog, activities, allEntries }) {
   const [activityId, setActivityId] = useState(activities[0]?.id || "");
-  const [duration, setDuration] = useState(30);
+  const [duration, setDuration] = useState("30");
   const [mindful, setMindful] = useState(false);
 
-  const act = activities.find(a => a.id === activityId);
-  // Preview: simulate adding this entry
-  const previewEntry = { date: todayStr(), activity_type: activityId, duration_min: duration, mindful };
-  const preview = act ? scoreSession(previewEntry, activities, [...allEntries, previewEntry]) : { starsEarned: 0, message: "" };
-
   const handleLog = () => {
+    const mins = parseInt(duration, 10);
+    if (!mins || mins < 1) return;
     onLog({
       date: todayStr(),
       activity_type: activityId,
-      duration_min: duration,
+      duration_min: mins,
       mindful,
     });
     onClose();
   };
+
+  const validDuration = parseInt(duration, 10) >= 1;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -413,9 +412,20 @@ function LogModal({ onClose, onLog, activities, allEntries }) {
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:10, justifyContent:"center", marginBottom:16 }}>
           <span style={{ color:P.soft, fontSize:14 }}>Duration</span>
-          <select value={duration} onChange={e => setDuration(Number(e.target.value))} className="duration-select">
-            {[5,10,15,20,25,30,35,40,45,50,60,75,90,120].map(v => <option key={v} value={v}>{v}</option>)}
-          </select>
+          <input
+            type="number"
+            inputMode="numeric"
+            min="1"
+            max="300"
+            value={duration}
+            onChange={e => setDuration(e.target.value)}
+            style={{
+              width:72, textAlign:"center", fontSize:18, fontWeight:600,
+              background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:10,
+              color:P.text, padding:"8px 10px", outline:"none",
+              fontFamily:"'Inter', sans-serif",
+            }}
+          />
           <span style={{ color:P.muted, fontSize:14 }}>min</span>
         </div>
         <label className="flag-label" style={{ "--accent": P.gold }}>
@@ -423,14 +433,9 @@ function LogModal({ onClose, onLog, activities, allEntries }) {
           <span className="flag-star">✦</span>
           Mindful session (phone-free / fully present)
         </label>
-        <p style={{ color:P.gold, fontSize:16, fontWeight:600, textAlign:"center", margin:"16px 0" }}>
-          → +{preview.starsEarned} star{preview.starsEarned !== 1 ? "s" : ""}
-        </p>
-        <p style={{ color:P.soft, fontSize:11, textAlign:"center", fontStyle:"italic", marginBottom:8 }}>
-          {preview.message}
-        </p>
-        <div style={{ display:"flex", gap:12, justifyContent:"center", marginTop:20 }}>
-          <button className="btn-primary" onClick={handleLog}>✦ Place This Star</button>
+        <div style={{ display:"flex", gap:12, justifyContent:"center", marginTop:24 }}>
+          <button className="btn-primary" onClick={handleLog} disabled={!validDuration}
+            style={{ opacity: validDuration ? 1 : 0.4 }}>✦ Place This Star</button>
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
         </div>
       </div>
@@ -1212,11 +1217,12 @@ RULES FOR REWARDS (flat list of 6-8 items):
 
 // ─── SETTINGS & ACCOUNT MODAL ────────────────────────────────────────────────
 
-function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted }) {
+function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted, onUpdateData }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [deleteTyped, setDeleteTyped] = useState("");
+  const fileInputRef = useRef(null);
 
   const providerIds = user.providerData?.map(p => p.providerId) || [];
   const isGoogle = providerIds.includes("google.com");
@@ -1230,20 +1236,52 @@ function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted })
   const totalEntries = userData?.entries?.length || 0;
   const totalClaimed = userData?.claimed?.length || 0;
 
+  // Profile picture: prefer custom uploaded, then Google/Apple photo
+  const customPhoto = userData?.profile?.photoURL;
+  const authPhoto = user.photoURL;
+  const displayPhoto = customPhoto || authPhoto;
+
+  const handlePhotoUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 500000) { alert("Image too large. Please use an image under 500KB."); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      // Create a canvas to resize
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const size = 128;
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        // Crop to square from center
+        const min = Math.min(img.width, img.height);
+        const sx = (img.width - min) / 2;
+        const sy = (img.height - min) / 2;
+        ctx.drawImage(img, sx, sy, min, min, 0, 0, size, size);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+        onUpdateData({ profile: { ...userData.profile, photoURL: dataUrl } });
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemovePhoto = () => {
+    const { photoURL, ...rest } = userData.profile || {};
+    onUpdateData({ profile: rest });
+  };
+
   const handleDeleteAccount = async () => {
     setDeleteLoading(true);
     setDeleteError("");
     try {
-      // Delete Firestore data first
       await deleteDoc(doc(db, "users", user.uid));
-
-      // Then delete the Firebase Auth account
-      // This may require reauthentication if the session is old
       try {
         await deleteUser(user);
       } catch (reAuthErr) {
         if (reAuthErr.code === "auth/requires-recent-login") {
-          // Reauthenticate based on provider
           if (isGoogle) {
             await reauthenticateWithPopup(user, googleProvider);
           } else if (isApple) {
@@ -1253,13 +1291,11 @@ function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted })
             setDeleteLoading(false);
             return;
           }
-          // Retry delete after reauth
           await deleteUser(user);
         } else {
           throw reAuthErr;
         }
       }
-
       onAccountDeleted();
     } catch (err) {
       console.error("Delete error:", err);
@@ -1283,11 +1319,48 @@ function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted })
         <div className="settings-section">
           <h4 className="settings-section-title">Account</h4>
           <div className="settings-info-grid">
-            {user.photoURL && (
-              <div style={{ display:"flex", justifyContent:"center", marginBottom:12 }}>
-                <img src={user.photoURL} alt="" style={{ width:56, height:56, borderRadius:"50%", border:`2px solid ${P.dim}` }} />
+            {/* Profile Picture */}
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", marginBottom:16 }}>
+              <div style={{ position:"relative", cursor:"pointer" }} onClick={() => fileInputRef.current?.click()}>
+                {displayPhoto ? (
+                  <img src={displayPhoto} alt="" style={{ width:72, height:72, borderRadius:"50%", border:`2px solid ${P.dim}`, objectFit:"cover" }} />
+                ) : (
+                  <div style={{
+                    width:72, height:72, borderRadius:"50%", border:`2px dashed ${P.dim}`,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    background:P.glass, color:P.muted, fontSize:24,
+                  }}>
+                    {(userData?.profile?.displayName || user.displayName || "?")[0]?.toUpperCase()}
+                  </div>
+                )}
+                <div style={{
+                  position:"absolute", bottom:-2, right:-2,
+                  width:24, height:24, borderRadius:"50%",
+                  background:P.nebula, display:"flex", alignItems:"center", justifyContent:"center",
+                  border:`2px solid ${P.bg}`,
+                }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                    <circle cx="12" cy="13" r="4"/>
+                  </svg>
+                </div>
               </div>
-            )}
+              <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoUpload}
+                style={{ display:"none" }} />
+              <div style={{ display:"flex", gap:8, marginTop:8 }}>
+                <button className="btn-ghost" style={{ fontSize:11, padding:"2px 10px" }}
+                  onClick={() => fileInputRef.current?.click()}>
+                  {displayPhoto ? "Change photo" : "Add photo"}
+                </button>
+                {customPhoto && (
+                  <button className="btn-ghost" style={{ fontSize:11, padding:"2px 10px", color:P.muted }}
+                    onClick={handleRemovePhoto}>
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+
             <div className="settings-info-row">
               <span className="settings-info-label">Name</span>
               <span className="settings-info-value">{userData?.profile?.displayName || user.displayName || "—"}</span>
@@ -1579,7 +1652,7 @@ export default function StarFlow() {
   const [encouragement] = useState(() => ENCOURAGEMENTS[Math.floor(Math.random() * ENCOURAGEMENTS.length)]);
   const [showGuide, setShowGuide] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [activeView, setActiveView] = useState("tonight"); // tonight | flow | checkin
+  const [activeView, setActiveView] = useState("now"); // now | flow | checkin
   const [devTaps, setDevTaps] = useState(0);
   const [showDev, setShowDev] = useState(false);
   const devTimer = useRef(null);
@@ -1679,7 +1752,7 @@ export default function StarFlow() {
       }
     }
 
-    // Also add 1 entry for today so Tonight section is populated
+    // Also add 1 entry for today so Now section is populated
     const todayStr2 = today.toISOString().slice(0, 10);
     if (!testEntries.some(e => e.date === todayStr2)) {
       const act = activities[0];
@@ -1887,8 +1960,8 @@ export default function StarFlow() {
               <circle cx="12" cy="12" r="3"/>
             </svg>
           </button>
-          {user.photoURL
-            ? <img src={user.photoURL} alt="" className="avatar" onClick={() => setShowSettings(true)} title="Account" />
+          {(userData?.profile?.photoURL || user.photoURL)
+            ? <img src={userData?.profile?.photoURL || user.photoURL} alt="" className="avatar" onClick={() => setShowSettings(true)} title="Account" />
             : <button className="help-btn" onClick={() => setShowSettings(true)} title="Account">↩</button>}
         </div>
       </header>
@@ -1918,11 +1991,11 @@ export default function StarFlow() {
       )}
 
 
-      {/* ══════════ TONIGHT VIEW (default home — reflective only) ══════════ */}
-      {activeView === "tonight" && (<>
+      {/* ══════════ NOW VIEW (default home — reflective only) ══════════ */}
+      {activeView === "now" && (<>
         <div style={{ textAlign:"center", paddingTop:16, paddingBottom:8 }}>
           <p style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:20, fontWeight:500, marginBottom:6 }}>
-            {todayEntries.length === 0 ? "The sky is quiet tonight." : `${todayStarsVal} star${todayStarsVal !== 1 ? "s" : ""} in tonight's sky.`}
+            {todayEntries.length === 0 ? "The sky is waiting." : `${todayStarsVal} star${todayStarsVal !== 1 ? "s" : ""} placed today.`}
           </p>
           <p className="encouragement" style={{ marginBottom:24 }}>{encouragement}</p>
           <button className="btn-primary btn-large" onClick={() => setShowLog(true)}>✦ Add a Moment</button>
@@ -1956,8 +2029,8 @@ export default function StarFlow() {
           <div style={{ textAlign:"center", marginTop:24 }}>
             <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontStyle:"italic", fontSize:14, lineHeight:1.7 }}>
               {streak > 1
-                ? `${streak} nights in a row. The sky notices.`
-                : "You showed up tonight. That's enough."}
+                ? `${streak} days in a row. The sky notices.`
+                : "You showed up. That's enough."}
             </p>
           </div>
         )}
@@ -2147,7 +2220,7 @@ export default function StarFlow() {
     }}>
       <div style={{ display:"flex", justifyContent:"center", gap:4, maxWidth:480, margin:"0 auto" }}>
         {[
-          { id:"tonight", label:"Tonight", icon:"✦" },
+          { id:"now", label:"Now", icon:"✦" },
           { id:"flow", label:"Flow", icon:"☽" },
           { id:"checkin", label:"Check-in", icon:"⟡" },
         ].map(tab => (
@@ -2229,6 +2302,7 @@ export default function StarFlow() {
         onClose={() => setShowSettings(false)}
         onSignOut={handleSignOut}
         onAccountDeleted={() => { setShowSettings(false); }}
+        onUpdateData={updateData}
       />
     )}
     </div>
