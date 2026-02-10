@@ -745,7 +745,7 @@ Respond with ONLY a JSON object (no markdown, no backticks, no explanation outsi
     "monthlyStretch": 30
   },
   "rewards": ["reward1", "reward2", "reward3", "reward4", "reward5", "reward6", "reward7", "reward8"],
-  "explanation": "A warm 2-3 sentence explanation of why you designed this plan this way, addressing ${displayName} by name. Match the tone they selected: ${answers.tone_preference || "calm and neutral"}."
+  "explanation": "A warm 2-3 sentence message in an ethereal, third-person voice — as if the stars or the sky are speaking. NEVER use 'I' or 'we'. Instead use phrases like 'This sky was shaped around...', 'The stars noticed...', 'Your constellation honors...'. Address ${displayName} by name. Match the tone they selected: ${answers.tone_preference || "calm and neutral"}. Example tone: 'This sky was shaped around your need for calm, grounding movement, ${displayName}. The stars honor consistency over intensity.'"
 }
 
 RULES FOR ACTIVITY minDuration:
@@ -791,7 +791,7 @@ RULES FOR REWARDS (flat list of 6-8 items):
       setGeneratedActivities(parsed.activities || []);
       setGeneratedTargets(parsed.targets || { ...DEFAULT_TARGETS });
       setGeneratedRewards(Array.isArray(parsed.rewards) ? parsed.rewards : [...DEFAULT_REWARDS]);
-      setAiExplanation(parsed.explanation || "Your personalized plan is ready.");
+      setAiExplanation(parsed.explanation || "This sky was shaped around you. The stars honor consistency over intensity.");
       setReviewStep(0);
       setPhase("review");
     } catch (err) {
@@ -964,7 +964,7 @@ RULES FOR REWARDS (flat list of 6-8 items):
                 )}
                 {!aiExplanation && (
                   <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 15, lineHeight: 1.7, maxWidth: 340, margin: "0 auto 32px" }}>
-                    This plan was shaped around you. You don't need to push here — consistency is what matters.
+                    This sky was shaped around you. The stars don't ask you to push — they ask you to return.
                   </p>
                 )}
                 {aiError && (
