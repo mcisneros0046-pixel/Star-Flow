@@ -313,7 +313,8 @@ function StarParticles() {
 
 function ProgressRing({ current, target, stretch }) {
   const pct = target > 0 ? Math.min(current/target, 1) : 0;
-  const isStretch = current >= stretch, isTarget = current >= target, remaining = target - current;
+  const isStretch = current >= stretch, isTarget = current >= target, remaining = Math.round((target - current) * 10) / 10;
+  const displayCurrent = Math.round(current * 10) / 10;
   const r=72, cx=120, cy=120, lw=14, circ=2*Math.PI*r, offset=circ*(1-pct);
   const strokeColor = isStretch ? P.gold : P.nebula, glowColor = isStretch ? P.gold : P.nebula;
   const subText = isStretch ? "You reached the far stars."
@@ -329,7 +330,7 @@ function ProgressRing({ current, target, stretch }) {
           strokeDasharray={circ} strokeDashoffset={offset} transform={`rotate(-90 ${cx} ${cy})`}
           style={{ transition:"stroke-dashoffset 0.8s ease, stroke 0.5s ease" }} />
         <text x={cx} y={cy-10} textAnchor="middle" fill={P.text}
-          style={{ fontSize:"36px", fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:600 }}>{current}</text>
+          style={{ fontSize:"36px", fontFamily:"'Cormorant Garamond', Georgia, serif", fontWeight:600 }}>{displayCurrent}</text>
         <text x={cx} y={cy+18} textAnchor="middle" fill={P.soft}
           style={{ fontSize:"13px", fontFamily:"'Inter', sans-serif" }}>of {target} stars</text>
       </svg>
