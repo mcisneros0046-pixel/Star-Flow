@@ -1,6 +1,6 @@
-const https = require("https");
+import https from "https";
 
-module.exports = function handler(req, res) {
+export default function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -10,9 +10,9 @@ module.exports = function handler(req, res) {
     return res.status(500).json({ error: "API key not configured" });
   }
 
-  var body = JSON.stringify(req.body);
+  const body = JSON.stringify(req.body);
 
-  var options = {
+  const options = {
     hostname: "api.anthropic.com",
     port: 443,
     path: "/v1/messages",
@@ -25,8 +25,8 @@ module.exports = function handler(req, res) {
     }
   };
 
-  var apiReq = https.request(options, function(apiRes) {
-    var data = "";
+  const apiReq = https.request(options, function(apiRes) {
+    let data = "";
     apiRes.on("data", function(chunk) { data += chunk; });
     apiRes.on("end", function() {
       try {
@@ -43,4 +43,4 @@ module.exports = function handler(req, res) {
 
   apiReq.write(body);
   apiReq.end();
-};
+}
