@@ -481,16 +481,120 @@ function CelebrateModal({ tier, reward, onClose }) {
 //   Step 5: Pick rewards for each tier
 //   Step 6: Launch
 
-function OnboardingWizard({ user, onComplete }) {
-  const [step, setStep] = useState(1);
-  const [displayName, setDisplayName] = useState(user.displayName || "");
-  const [selectedActivities, setSelectedActivities] = useState([]);
+// ─── ONBOARDING QUESTIONS ────────────────────────────────────────────────────
+const ONBOARD_QUESTIONS = [
+  {
+    id: "movement_feeling", type: "single",
+    question: "How does movement feel to you right now?",
+    options: ["Calm and grounding", "Hopeful but inconsistent", "Neutral", "Overwhelming", "Resistant", "Curious but unsure"],
+  },
+  {
+    id: "past_friction", type: "multi",
+    question: "What has most often made movement hard to stick with?",
+    subtitle: "Select all that apply",
+    options: ["Lack of time", "Low energy", "Motivation comes and goes", "All-or-nothing thinking", "Comparison or intimidation", "Physical discomfort"],
+  },
+  {
+    id: "intention", type: "single",
+    question: "Which intention feels most important right now?",
+    options: ["Consistency, not intensity", "Gentle structure", "Freedom and flexibility", "Feeling strong", "Feeling calm in my body"],
+  },
+  {
+    id: "current_baseline", type: "single",
+    question: "On average, how often do you intentionally move your body?",
+    options: ["Rarely or just starting", "1–2 days per week", "3–4 days per week", "5 or more days per week"],
+  },
+  {
+    id: "movement_types", type: "multi",
+    question: "What kinds of movement do you enjoy, even a little?",
+    subtitle: "Select all that apply",
+    options: ["Walking", "Running", "Gym workouts", "Pilates or yoga", "Stretching or mobility", "Swimming", "Cycling", "Dancing", "Meditation", "I'm still exploring"],
+  },
+  {
+    id: "time_realism", type: "single",
+    question: "On a regular day, how much time feels realistic for movement?",
+    options: ["5–10 minutes", "15–20 minutes", "30 minutes", "45 minutes or more"],
+  },
+  {
+    id: "three_month_vision", type: "multi",
+    question: "Three months from now, what would feeling \"better\" look like?",
+    subtitle: "Select all that resonate",
+    options: ["More energy", "Less stress", "Better sleep", "Feeling stronger", "More confidence", "A steady routine"],
+  },
+  {
+    id: "goal_focus", type: "single",
+    question: "Which focus matters most to you right now?",
+    options: ["Mental health and emotional balance", "Physical strength", "Appearance or aesthetics", "Discipline and routine", "Recovery and gentleness"],
+  },
+  {
+    id: "life_fit", type: "single",
+    question: "How do you want movement to fit into your life?",
+    options: ["A grounding ritual", "A personal challenge", "A non-negotiable habit", "A flexible support system"],
+  },
+  {
+    id: "motivation_style", type: "single",
+    question: "What motivates you most?",
+    options: ["Checking things off", "Seeing visual progress", "Earning rewards", "Internal pride"],
+  },
+  {
+    id: "missed_day", type: "single",
+    question: "If you miss a day, what helps you come back?",
+    options: ["Gentle reassurance", "Clear structure to restart", "Accountability", "Permission to rest"],
+  },
+  {
+    id: "tracking_comfort", type: "single",
+    question: "How do you feel about tracking progress?",
+    options: ["I enjoy it", "I'm neutral", "Only if it's simple", "I prefer minimal tracking"],
+  },
+  {
+    id: "reward_types", type: "multi",
+    question: "What actually feels rewarding to you?",
+    subtitle: "Select all that apply",
+    options: ["Coffee or small treats", "Beauty or self-care items", "Experiences or outings", "Extra rest or free time", "Visual achievements (stars, glow, milestones)"],
+  },
+  {
+    id: "reward_pacing", type: "single",
+    question: "When do rewards feel best?",
+    options: ["Small and frequent", "Milestone-based", "Surprise-based", "Long-term goals"],
+  },
+  {
+    id: "progress_style", type: "single",
+    question: "What makes progress feel good rather than stressful?",
+    options: ["Streaks", "Point accumulation", "Personal bests", "Simply showing up"],
+  },
+  {
+    id: "tone_preference", type: "single",
+    question: "What tone feels most supportive to you?",
+    options: ["Soft and nurturing", "Calm and neutral", "Motivational", "Lightly playful"],
+  },
+  {
+    id: "boundaries", type: "multi",
+    question: "What should Star Flow never emphasize?",
+    subtitle: "Select all that apply",
+    options: ["Weight", "Calories", "Comparison to others", "Guilt or shame language"],
+  },
+];
 
-  // AI assessment state
-  const [fitnessLevel, setFitnessLevel] = useState("");
-  const [goal, setGoal] = useState("");
-  const [daysPerWeek, setDaysPerWeek] = useState(4);
-  const [notes, setNotes] = useState("");
+// Map movement_types answers to activity preset IDs
+const MOVEMENT_TO_PRESET = {
+  "Walking": "walk",
+  "Running": "run",
+  "Gym workouts": "gym",
+  "Pilates or yoga": "yoga",
+  "Stretching or mobility": "yoga",
+  "Swimming": "swim",
+  "Cycling": "cycle",
+  "Dancing": "dance",
+  "Meditation": "meditate",
+  "I'm still exploring": null,
+};
+
+function OnboardingWizard({ user, onComplete }) {
+  const [phase, setPhase] = useState("welcome"); // welcome | questions | generating | review
+  const [displayName, setDisplayName] = useState(user.displayName || "");
+  const [qIndex, setQIndex] = useState(0);
+  const [answers, setAnswers] = useState({});
+  const [fadeState, setFadeState] = useState("in"); // in | out
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
 
@@ -500,43 +604,113 @@ function OnboardingWizard({ user, onComplete }) {
   const [generatedRewards, setGeneratedRewards] = useState({ ...DEFAULT_REWARDS });
   const [aiExplanation, setAiExplanation] = useState("");
 
-  const totalSteps = 4;
+  const totalQuestions = ONBOARD_QUESTIONS.length;
+  const currentQ = ONBOARD_QUESTIONS[qIndex];
 
-  const toggleActivity = (id) => {
-    setSelectedActivities(prev =>
-      prev.includes(id) ? prev.filter(a => a !== id) : [...prev, id]
-    );
+  // Current answer for this question
+  const currentAnswer = answers[currentQ?.id];
+  const hasAnswer = currentQ?.type === "multi"
+    ? (currentAnswer && currentAnswer.length > 0)
+    : !!currentAnswer;
+
+  // Select an option
+  const selectOption = (option) => {
+    if (!currentQ) return;
+    if (currentQ.type === "multi") {
+      setAnswers(prev => {
+        const arr = prev[currentQ.id] || [];
+        return {
+          ...prev,
+          [currentQ.id]: arr.includes(option)
+            ? arr.filter(o => o !== option)
+            : [...arr, option],
+        };
+      });
+    } else {
+      setAnswers(prev => ({ ...prev, [currentQ.id]: option }));
+      // Auto-advance after brief pause for single select
+      setTimeout(() => goNext(), 400);
+    }
   };
 
-  // ── Call AI to generate personalized plan ──
+  // Navigate with fade
+  const fadeTo = (cb) => {
+    setFadeState("out");
+    setTimeout(() => {
+      cb();
+      setFadeState("in");
+    }, 300);
+  };
+
+  const goNext = () => {
+    if (qIndex < totalQuestions - 1) {
+      fadeTo(() => setQIndex(q => q + 1));
+    } else {
+      fadeTo(() => {
+        setPhase("generating");
+        generatePlan();
+      });
+    }
+  };
+
+  const goBack = () => {
+    if (qIndex > 0) {
+      fadeTo(() => setQIndex(q => q - 1));
+    } else {
+      fadeTo(() => setPhase("welcome"));
+    }
+  };
+
+  // ── Build AI prompt from all answers ──
   const generatePlan = async () => {
     setAiLoading(true);
     setAiError("");
 
-    const selectedPresets = selectedActivities.map(id => ACTIVITY_PRESETS.find(p => p.id === id));
-    const activityList = selectedPresets.map(a => a.label).join(", ");
+    // Map selected movements to activity presets
+    const selectedMovements = answers.movement_types || [];
+    const presetIds = [...new Set(
+      selectedMovements
+        .map(m => MOVEMENT_TO_PRESET[m])
+        .filter(Boolean)
+    )];
+    // Fallback if "still exploring" or nothing maps
+    const selectedPresets = presetIds.length > 0
+      ? presetIds.map(id => ACTIVITY_PRESETS.find(p => p.id === id)).filter(Boolean)
+      : [ACTIVITY_PRESETS[0], ACTIVITY_PRESETS[1]]; // yoga + walking default
 
-    const prompt = `You are a wellness coach creating a personalized movement tracking plan for someone using a star-based reward system app.
+    const answersText = ONBOARD_QUESTIONS.map(q => {
+      const a = answers[q.id];
+      const val = Array.isArray(a) ? a.join(", ") : (a || "No answer");
+      return `${q.question}\n→ ${val}`;
+    }).join("\n\n");
 
-USER PROFILE:
-- Name: ${displayName}
-- Fitness level: ${fitnessLevel}
-- Primary goal: ${goal}
-- Wants to be active ${daysPerWeek} days per week
-- Chosen activities: ${activityList}
-${notes ? `- Additional notes: ${notes}` : ""}
+    const prompt = `You are a thoughtful wellness coach designing a personalized movement tracking plan. The user has completed a detailed assessment. Use their answers to create a plan that feels genuinely tailored — not generic.
 
-ACTIVITY PRESETS (these are the base templates — adjust the scoring based on the user's profile):
+USER NAME: ${displayName}
+
+FULL ASSESSMENT:
+${answersText}
+
+SELECTED ACTIVITY PRESETS (use these as base templates — adjust scoring based on answers):
 ${JSON.stringify(selectedPresets.map(a => ({ id: a.id, label: a.label, color: a.color, colorLight: a.colorLight })), null, 2)}
 
-YOUR TASK:
-Generate a personalized plan that includes scoring rules, weekly/monthly targets, and rewards. Adjust difficulty based on fitness level — beginners should earn stars more easily to build confidence, advanced users need higher thresholds.
+CRITICAL GUIDELINES BASED ON THEIR ANSWERS:
+- Movement feeling "${answers.movement_feeling || ""}" → adjust difficulty & encouragement style
+- Past friction: "${(answers.past_friction || []).join(", ")}" → remove those barriers in the scoring
+- Current baseline "${answers.current_baseline || ""}" → calibrate minimum durations & star thresholds
+- Time realism "${answers.time_realism || ""}" → set minDuration to fit their schedule
+- Goal focus "${answers.goal_focus || ""}" → weight the scoring toward their priority
+- Motivation style "${answers.motivation_style || ""}" → shape how points accumulate
+- Reward preferences: "${(answers.reward_types || []).join(", ")}" → personalize reward suggestions
+- Tone preference "${answers.tone_preference || ""}" → inform the explanation voice
+- Boundaries: "${(answers.boundaries || []).join(", ")}" → NEVER include these in rewards or language
+- Tracking comfort "${answers.tracking_comfort || ""}" → simpler scoring for minimal trackers
 
-Respond with ONLY a JSON object (no markdown, no backticks, no explanation before or after) with this exact structure:
+Respond with ONLY a JSON object (no markdown, no backticks, no explanation outside JSON):
 {
   "activities": [
     {
-      "id": "activity_id",
+      "id": "preset_id",
       "label": "Activity Name",
       "color": "#hex",
       "colorLight": "rgba(...)",
@@ -544,7 +718,7 @@ Respond with ONLY a JSON object (no markdown, no backticks, no explanation befor
       "baseStars": 1,
       "midDuration": 40,
       "midStars": 2,
-      "bonusLabel": "Description of bonus effort",
+      "bonusLabel": "Specific bonus description",
       "bonusStars": 1
     }
   ],
@@ -561,20 +735,19 @@ Respond with ONLY a JSON object (no markdown, no backticks, no explanation befor
     "silver": ["reward1", "reward2", "reward3", "reward4", "reward5"],
     "gold": ["reward1", "reward2", "reward3", "reward4", "reward5"]
   },
-  "explanation": "A 2-3 sentence explanation of why you chose these settings, addressing the user by name."
+  "explanation": "A warm 2-3 sentence explanation of why you designed this plan this way, addressing ${displayName} by name. Match the tone they selected: ${answers.tone_preference || "calm and neutral"}."
 }
 
-RULES:
-- minDuration must be realistic for the activity and fitness level (lower for beginners)
-- midDuration is optional (set to null if single-tier scoring makes more sense)
-- midStars should be higher than baseStars
-- bonusLabel should be specific and motivating for each activity
-- Targets should be achievable at ${daysPerWeek} days/week — don't set them so high that the user can't reach Bronze
-- Weekly targets: Bronze should be very reachable, Silver challenging, Gold ambitious
-- Monthly target should assume ~${daysPerWeek} active days/week
-- Rewards should escalate in value: bronze = small treats ($5-15), silver = medium rewards ($15-50), gold = significant rewards ($50-150)
-- Rewards should feel personal and motivating, not generic
-- Keep the color and colorLight values from the presets`;
+SCORING RULES:
+- "Rarely or just starting" → very low minDuration (10-15min), generous stars
+- "5 or more days per week" → higher thresholds, more tiers
+- "5–10 minutes" time realism → minDuration of 5-10, no second tier
+- "45 minutes or more" → include midDuration tiers
+- If they chose "Only if it's simple" tracking → fewer tiers, simpler bonuses
+- Weekly Bronze must be very reachable based on their baseline
+- Rewards must match their reward_types and NEVER violate boundaries
+- If boundaries include "Weight" → no weight-related rewards
+- If boundaries include "Calories" → no calorie/food-restriction rewards`;
 
     try {
       const response = await fetch("/api/generate-plan", {
@@ -582,7 +755,7 @@ RULES:
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
+          max_tokens: 1200,
           messages: [{ role: "user", content: prompt }],
         }),
       });
@@ -594,43 +767,31 @@ RULES:
       let parsed;
       try {
         parsed = JSON.parse(clean);
-      } catch (parseErr) {
-        // Try to extract JSON from the response
+      } catch {
         const jsonMatch = clean.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          parsed = JSON.parse(jsonMatch[0]);
-        } else {
-          throw new Error("Could not parse AI response");
-        }
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+        else throw new Error("Could not parse AI response");
       }
 
       setGeneratedActivities(parsed.activities || []);
       setGeneratedTargets(parsed.targets || { ...DEFAULT_TARGETS });
       setGeneratedRewards(parsed.rewards || { ...DEFAULT_REWARDS });
       setAiExplanation(parsed.explanation || "Your personalized plan is ready.");
-      setStep(4);
+      setPhase("review");
     } catch (err) {
       console.error("AI generation error:", err);
-      setAiError("Something went wrong generating your plan. You can try again or use the defaults.");
+      setAiError("Something went wrong generating your plan.");
       // Fall back to presets
-      setGeneratedActivities(selectedActivities.map(id => ({ ...ACTIVITY_PRESETS.find(p => p.id === id) })));
+      setGeneratedActivities(selectedPresets.map(p => ({ ...p })));
       setGeneratedTargets({ ...DEFAULT_TARGETS });
       setGeneratedRewards({ ...DEFAULT_REWARDS });
       setAiExplanation("");
+      setPhase("review");
     }
     setAiLoading(false);
   };
 
-  // Use defaults if AI fails
-  const useDefaults = () => {
-    setGeneratedActivities(selectedActivities.map(id => ({ ...ACTIVITY_PRESETS.find(p => p.id === id) })));
-    setGeneratedTargets({ ...DEFAULT_TARGETS });
-    setGeneratedRewards({ ...DEFAULT_REWARDS });
-    setAiExplanation("");
-    setStep(4);
-  };
-
-  // Update a reward in the review step
+  // Update rewards on review screen
   const updateReward = (tier, idx, value) => {
     setGeneratedRewards(prev => {
       const next = { ...prev, [tier]: [...prev[tier]] };
@@ -652,6 +813,7 @@ RULES:
         displayName,
         onboardingComplete: true,
         createdAt: new Date().toISOString(),
+        assessmentAnswers: answers,
       },
       activities: generatedActivities,
       targets: generatedTargets,
@@ -667,176 +829,136 @@ RULES:
     onComplete(userData);
   };
 
+  // Progress percentage
+  const progress = phase === "welcome" ? 0
+    : phase === "questions" ? ((qIndex + 1) / totalQuestions) * 100
+    : 100;
+
   return (
     <div className="star-flow-app">
       <style>{STYLES}</style>
       <StarParticles />
-      <div className="app-scroll" style={{ maxWidth:480, paddingTop:60 }}>
-        {/* Progress indicator */}
-        <div style={{ display:"flex", justifyContent:"center", gap:8, marginBottom:32 }}>
-          {Array.from({ length: totalSteps }, (_, i) => (
-            <div key={i} style={{
-              width: 32, height: 3, borderRadius: 2,
-              background: i + 1 <= step ? P.nebula : P.dim,
-              transition: "background 0.3s",
-            }} />
-          ))}
-        </div>
+      <div className="app-scroll" style={{ maxWidth: 480, paddingTop: 40 }}>
 
-        {/* ── STEP 1: Welcome ── */}
-        {step === 1 && (
-          <div className="onboard-step">
+        {/* ── Progress Bar ── */}
+        {phase !== "welcome" && (
+          <div className="onboard-progress-bar">
+            <div className="onboard-progress-fill" style={{ width: `${progress}%` }} />
+          </div>
+        )}
+
+        {/* ── WELCOME ── */}
+        {phase === "welcome" && (
+          <div className="onboard-step onboard-fade-in">
             <div className="onboard-glow" />
-            <h1 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:48, textAlign:"center", marginBottom:8 }}>✦</h1>
-            <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:28, textAlign:"center", marginBottom:8 }}>Welcome to Star Flow</h2>
-            <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontStyle:"italic", textAlign:"center", marginBottom:32, fontSize:15 }}>Let's set up your sky.</p>
+            <h1 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 48, textAlign: "center", marginBottom: 8 }}>✦</h1>
+            <h2 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 28, textAlign: "center", marginBottom: 8 }}>Welcome to Star Flow</h2>
+            <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", textAlign: "center", marginBottom: 32, fontSize: 15 }}>
+              A few questions to create your personal sky.
+            </p>
             <GlassCard>
-              <label style={{ color:P.soft, fontSize:13, display:"block", marginBottom:8 }}>What should we call you?</label>
+              <label style={{ color: P.soft, fontSize: 13, display: "block", marginBottom: 8 }}>What should we call you?</label>
               <input type="text" value={displayName} onChange={e => setDisplayName(e.target.value)}
                 placeholder="Your name" className="onboard-input" autoFocus />
             </GlassCard>
-            <div style={{ textAlign:"center", marginTop:28 }}>
-              <button className="btn-primary btn-large" onClick={() => setStep(2)} disabled={!displayName.trim()}>Begin ✦</button>
-            </div>
-          </div>
-        )}
-
-        {/* ── STEP 2: Choose Activities ── */}
-        {step === 2 && (
-          <div className="onboard-step">
-            <h2 className="onboard-title">Choose Your Movements</h2>
-            <p className="onboard-subtitle">Select the activities you want to track. You can add more later.</p>
-            <div className="activity-grid">
-              {ACTIVITY_PRESETS.map(a => {
-                const sel = selectedActivities.includes(a.id);
-                return (
-                  <button key={a.id} onClick={() => toggleActivity(a.id)}
-                    className={`activity-pick ${sel ? "selected" : ""}`}
-                    style={{ "--accent": a.color }}>
-                    <span className="activity-pick-star" style={{ color: sel ? a.color : P.dim }}>✦</span>
-                    <span className="activity-pick-label">{a.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="onboard-nav">
-              <button className="btn-ghost" onClick={() => setStep(1)}>Back</button>
-              <button className="btn-primary" onClick={() => setStep(3)} disabled={selectedActivities.length === 0}>Next ✦</button>
-            </div>
-          </div>
-        )}
-
-        {/* ── STEP 3: AI Assessment ── */}
-        {step === 3 && (
-          <div className="onboard-step">
-            <h2 className="onboard-title">Tell Us About You</h2>
-            <p className="onboard-subtitle">We'll create a personalized star system based on your fitness level and goals.</p>
-
-            <GlassCard className="section-card">
-              <label className="assess-label">What's your current fitness level?</label>
-              <div className="assess-options">
-                {[
-                  { val:"beginner", label:"Beginner", desc:"Just starting out or getting back into it" },
-                  { val:"intermediate", label:"Intermediate", desc:"Active a few times per week" },
-                  { val:"advanced", label:"Advanced", desc:"Consistent routine, ready for challenge" },
-                ].map(opt => (
-                  <button key={opt.val} onClick={() => setFitnessLevel(opt.val)}
-                    className={`assess-btn ${fitnessLevel === opt.val ? "selected" : ""}`}>
-                    <span className="assess-btn-label">{opt.label}</span>
-                    <span className="assess-btn-desc">{opt.desc}</span>
-                  </button>
-                ))}
-              </div>
-            </GlassCard>
-
-            <GlassCard className="section-card">
-              <label className="assess-label">What's your primary goal?</label>
-              <div className="assess-options">
-                {[
-                  { val:"consistency", label:"Build Consistency", desc:"Show up regularly, form the habit" },
-                  { val:"performance", label:"Push Performance", desc:"Get stronger, faster, better" },
-                  { val:"wellness", label:"Stress Relief", desc:"Move for mental health and calm" },
-                  { val:"health", label:"General Health", desc:"Stay active and feel good" },
-                ].map(opt => (
-                  <button key={opt.val} onClick={() => setGoal(opt.val)}
-                    className={`assess-btn ${goal === opt.val ? "selected" : ""}`}>
-                    <span className="assess-btn-label">{opt.label}</span>
-                    <span className="assess-btn-desc">{opt.desc}</span>
-                  </button>
-                ))}
-              </div>
-            </GlassCard>
-
-            <GlassCard className="section-card">
-              <label className="assess-label">How many days per week do you want to move?</label>
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:16, padding:"12px 0" }}>
-                <button className="target-btn" onClick={() => setDaysPerWeek(d => Math.max(1, d-1))}>−</button>
-                <span style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:36, fontWeight:600, width:40, textAlign:"center" }}>
-                  {daysPerWeek}
-                </span>
-                <button className="target-btn" onClick={() => setDaysPerWeek(d => Math.min(7, d+1))}>+</button>
-              </div>
-              <p style={{ color:P.muted, fontSize:12, textAlign:"center" }}>
-                {daysPerWeek <= 2 ? "Gentle start — every session counts" :
-                 daysPerWeek <= 4 ? "A balanced rhythm" :
-                 daysPerWeek <= 5 ? "Dedicated practice" : "Full commitment"}
-              </p>
-            </GlassCard>
-
-            <GlassCard className="section-card">
-              <label className="assess-label">Anything else we should know? <span style={{ color:P.dim, fontWeight:400 }}>(optional)</span></label>
-              <textarea value={notes} onChange={e => setNotes(e.target.value)}
-                className="onboard-input" placeholder="e.g. I have a knee injury so I keep runs short, I prefer morning workouts, I'm training for a 5K..."
-                style={{ resize:"vertical", minHeight:70, fontSize:13, lineHeight:1.5 }} />
-            </GlassCard>
-
-            {aiError && (
-              <GlassCard className="section-card" style={{ borderColor:"rgba(255,120,100,0.3)" }}>
-                <p style={{ color:"#FF9C8C", fontSize:13 }}>{aiError}</p>
-                <button className="btn-ghost" onClick={useDefaults} style={{ color:P.nebula, fontSize:13, marginTop:8 }}>
-                  Use default settings instead →
-                </button>
-              </GlassCard>
-            )}
-
-            <div className="onboard-nav">
-              <button className="btn-ghost" onClick={() => setStep(2)}>Back</button>
-              <button className="btn-primary btn-large" onClick={generatePlan}
-                disabled={!fitnessLevel || !goal || aiLoading}>
-                {aiLoading ? (
-                  <span style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <span className="ai-spinner" />Creating your plan…
-                  </span>
-                ) : "✦ Create My Plan"}
+            <div style={{ textAlign: "center", marginTop: 28 }}>
+              <button className="btn-primary btn-large" onClick={() => fadeTo(() => setPhase("questions"))}
+                disabled={!displayName.trim()}>
+                Begin ✦
               </button>
             </div>
           </div>
         )}
 
-        {/* ── STEP 4: Review AI-Generated Plan ── */}
-        {step === 4 && (
-          <div className="onboard-step">
+        {/* ── QUESTIONS ── */}
+        {phase === "questions" && currentQ && (
+          <div className={`onboard-step onboard-fade-${fadeState}`} key={qIndex}>
+            <p className="onboard-q-count">
+              {qIndex + 1} of {totalQuestions}
+            </p>
+            <h2 className="onboard-q-title">{currentQ.question}</h2>
+            {currentQ.subtitle && (
+              <p className="onboard-q-subtitle">{currentQ.subtitle}</p>
+            )}
+
+            <div className="onboard-options">
+              {currentQ.options.map(option => {
+                const isSelected = currentQ.type === "multi"
+                  ? (currentAnswer || []).includes(option)
+                  : currentAnswer === option;
+                return (
+                  <button key={option}
+                    className={`onboard-option ${isSelected ? "selected" : ""}`}
+                    onClick={() => selectOption(option)}>
+                    {currentQ.type === "multi" && (
+                      <span className="onboard-check">{isSelected ? "✦" : ""}</span>
+                    )}
+                    <span className="onboard-option-text">{option}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="onboard-nav">
+              <button className="btn-ghost" onClick={goBack}>Back</button>
+              {currentQ.type === "multi" && (
+                <button className="btn-primary" onClick={goNext} disabled={!hasAnswer}>
+                  {qIndex === totalQuestions - 1 ? "Finish ✦" : "Next"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── GENERATING ── */}
+        {phase === "generating" && (
+          <div className="onboard-step onboard-fade-in">
+            <div style={{ textAlign: "center", paddingTop: 80 }}>
+              <div className="generating-glow" />
+              <h2 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, marginBottom: 12 }}>
+                Reading your stars…
+              </h2>
+              <p style={{ color: P.soft, fontSize: 14, marginBottom: 32 }}>
+                Creating a plan shaped around you.
+              </p>
+              <div className="generating-stars">
+                <span className="gen-star" style={{ animationDelay: "0s" }}>✦</span>
+                <span className="gen-star" style={{ animationDelay: "0.3s" }}>✦</span>
+                <span className="gen-star" style={{ animationDelay: "0.6s" }}>✦</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── REVIEW ── */}
+        {phase === "review" && (
+          <div className="onboard-step onboard-fade-in">
             <h2 className="onboard-title">Your Personalized Sky</h2>
             {aiExplanation && (
-              <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontStyle:"italic", textAlign:"center", marginBottom:24, fontSize:14, lineHeight:1.6 }}>
+              <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", textAlign: "center", marginBottom: 24, fontSize: 14, lineHeight: 1.6 }}>
                 {aiExplanation}
+              </p>
+            )}
+            {aiError && (
+              <p style={{ color: "#FF9C8C", fontSize: 13, textAlign: "center", marginBottom: 16 }}>
+                {aiError} We used smart defaults instead.
               </p>
             )}
 
             {/* Activity Scoring */}
             <h3 className="review-section-title">✦ Scoring Rules</h3>
             {generatedActivities.map(act => (
-              <GlassCard key={act.id} className="section-card" style={{ marginBottom:8 }}>
-                <h4 style={{ color:act.color, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:17, marginBottom:8 }}>
+              <GlassCard key={act.id} className="section-card" style={{ marginBottom: 8 }}>
+                <h4 style={{ color: act.color, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 17, marginBottom: 8 }}>
                   ✦ {act.label}
                 </h4>
                 <div className="review-rules">
-                  <p style={{ color:P.text, fontSize:13 }}>
+                  <p style={{ color: P.text, fontSize: 13 }}>
                     {act.minDuration}+ min → {act.baseStars} star{act.baseStars !== 1 ? "s" : ""}
                     {act.midDuration && ` · ${act.midDuration}+ min → ${act.midStars} star${act.midStars !== 1 ? "s" : ""}`}
                   </p>
                   {act.bonusStars > 0 && (
-                    <p style={{ color:P.gold, fontSize:12, marginTop:4 }}>
+                    <p style={{ color: P.gold, fontSize: 12, marginTop: 4 }}>
                       ✦ {act.bonusLabel} → +{act.bonusStars} bonus star{act.bonusStars !== 1 ? "s" : ""}
                     </p>
                   )}
@@ -845,65 +967,63 @@ RULES:
             ))}
 
             {/* Targets */}
-            <h3 className="review-section-title" style={{ marginTop:16 }}>☽ Weekly & Monthly Goals</h3>
+            <h3 className="review-section-title" style={{ marginTop: 16 }}>☽ Weekly & Monthly Goals</h3>
             <GlassCard className="section-card">
               <div className="review-targets">
                 <div className="review-target-row">
-                  <span style={{ color:P.soft }}>Daily cap</span>
-                  <span style={{ color:P.gold, fontWeight:600 }}>{generatedTargets.dailyCap} stars</span>
+                  <span style={{ color: P.soft }}>Daily cap</span>
+                  <span style={{ color: P.gold, fontWeight: 600 }}>{generatedTargets.dailyCap} stars</span>
                 </div>
                 <div className="review-target-row">
-                  <span style={{ color:P.tierBronze }}>✦ Bronze</span>
-                  <span style={{ color:P.text }}>{generatedTargets.weeklyBronze}+ / week</span>
+                  <span style={{ color: P.tierBronze }}>✦ Bronze</span>
+                  <span style={{ color: P.text }}>{generatedTargets.weeklyBronze}+ / week</span>
                 </div>
                 <div className="review-target-row">
-                  <span style={{ color:P.tierSilver }}>✦ Silver</span>
-                  <span style={{ color:P.text }}>{generatedTargets.weeklySilver}+ / week</span>
+                  <span style={{ color: P.tierSilver }}>✦ Silver</span>
+                  <span style={{ color: P.text }}>{generatedTargets.weeklySilver}+ / week</span>
                 </div>
                 <div className="review-target-row">
-                  <span style={{ color:P.tierGold }}>✦ Gold</span>
-                  <span style={{ color:P.text }}>{generatedTargets.weeklyGold}+ / week</span>
+                  <span style={{ color: P.tierGold }}>✦ Gold</span>
+                  <span style={{ color: P.text }}>{generatedTargets.weeklyGold}+ / week</span>
                 </div>
                 <div className="divider" />
                 <div className="review-target-row">
-                  <span style={{ color:P.soft }}>Monthly target</span>
-                  <span style={{ color:P.nebula, fontWeight:600 }}>{generatedTargets.monthlyTarget} stars</span>
+                  <span style={{ color: P.soft }}>Monthly target</span>
+                  <span style={{ color: P.nebula, fontWeight: 600 }}>{generatedTargets.monthlyTarget} stars</span>
                 </div>
                 <div className="review-target-row">
-                  <span style={{ color:P.soft }}>Stretch goal</span>
-                  <span style={{ color:P.gold, fontWeight:600 }}>{generatedTargets.monthlyStretch} stars</span>
+                  <span style={{ color: P.soft }}>Stretch goal</span>
+                  <span style={{ color: P.gold, fontWeight: 600 }}>{generatedTargets.monthlyStretch} stars</span>
                 </div>
               </div>
             </GlassCard>
 
             {/* Rewards */}
-            <h3 className="review-section-title" style={{ marginTop:16 }}>★ Your Rewards</h3>
-            {["bronze","silver","gold"].map(tier => (
-              <GlassCard key={tier} className="section-card" style={{ marginBottom:8 }}>
-                <h4 style={{ color:tierColor(tier), fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:15, marginBottom:8 }}>
+            <h3 className="review-section-title" style={{ marginTop: 16 }}>★ Your Rewards</h3>
+            {["bronze", "silver", "gold"].map(tier => (
+              <GlassCard key={tier} className="section-card" style={{ marginBottom: 8 }}>
+                <h4 style={{ color: tierColor(tier), fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, marginBottom: 8 }}>
                   ✦ {tier.charAt(0).toUpperCase() + tier.slice(1)}
                 </h4>
                 {(generatedRewards[tier] || []).map((rw, idx) => (
-                  <div key={idx} style={{ display:"flex", gap:6, marginBottom:5, alignItems:"center" }}>
+                  <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 5, alignItems: "center" }}>
                     <input type="text" value={rw} onChange={e => updateReward(tier, idx, e.target.value)}
-                      className="onboard-input" style={{ flex:1, fontSize:12, padding:"7px 11px" }} />
+                      className="onboard-input" style={{ flex: 1, fontSize: 12, padding: "7px 11px" }} />
                     <button onClick={() => removeReward(tier, idx)}
-                      style={{ color:P.muted, fontSize:16, background:"none", border:"none", cursor:"pointer", padding:"0 4px" }}>×</button>
+                      style={{ color: P.muted, fontSize: 16, background: "none", border: "none", cursor: "pointer", padding: "0 4px" }}>×</button>
                   </div>
                 ))}
                 <button className="btn-ghost" onClick={() => addReward(tier)}
-                  style={{ fontSize:11, color:tierColor(tier), padding:"2px 0" }}>+ Add reward</button>
+                  style={{ fontSize: 11, color: tierColor(tier), padding: "2px 0" }}>+ Add reward</button>
               </GlassCard>
             ))}
 
-            <div style={{ display:"flex", flexDirection:"column", gap:10, marginTop:24, alignItems:"center" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 24, alignItems: "center" }}>
               <button className="btn-primary btn-large" onClick={handleLaunch}>✦ Launch Your Sky</button>
-              <div style={{ display:"flex", gap:12 }}>
-                <button className="btn-ghost" onClick={() => setStep(3)} style={{ fontSize:13 }}>← Adjust answers</button>
-                <button className="btn-ghost" onClick={generatePlan} style={{ fontSize:13, color:P.nebula }}>
-                  {aiLoading ? "Regenerating…" : "✦ Regenerate plan"}
-                </button>
-              </div>
+              <button className="btn-ghost" onClick={() => {
+                setPhase("questions");
+                setQIndex(totalQuestions - 1);
+              }} style={{ fontSize: 13 }}>← Back to questions</button>
             </div>
           </div>
         )}
@@ -1894,23 +2014,37 @@ const STYLES = `
 .onboard-input::placeholder{color:${P.dim};}
 textarea.onboard-input{font-family:'Inter',sans-serif;line-height:1.5;}
 .onboard-nav{display:flex;justify-content:space-between;align-items:center;margin-top:28px;}
-.activity-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:8px;}
-.activity-pick{display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 12px;background:${P.glass};border:1.5px solid ${P.dim};border-radius:16px;cursor:pointer;transition:all 0.2s;font-family:'Inter',sans-serif;}
-.activity-pick:hover{border-color:var(--accent);}
-.activity-pick.selected{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent);box-shadow:0 0 16px color-mix(in srgb,var(--accent) 12%,transparent);}
-.activity-pick-star{font-size:20px;transition:color 0.2s;}
-.activity-pick-label{font-size:13px;font-weight:500;color:${P.text};}
 
-/* ── AI Assessment ── */
-.assess-label{display:block;color:${P.text};font-size:14px;font-weight:500;margin-bottom:10px;}
-.assess-options{display:flex;flex-direction:column;gap:6px;}
-.assess-btn{display:flex;flex-direction:column;gap:2px;padding:12px 16px;background:transparent;border:1.5px solid ${P.dim};border-radius:14px;cursor:pointer;transition:all 0.2s;text-align:left;font-family:'Inter',sans-serif;}
-.assess-btn:hover{border-color:${P.nebula};background:rgba(156,140,255,0.04);}
-.assess-btn.selected{border-color:${P.nebula};background:rgba(156,140,255,0.1);box-shadow:0 0 12px rgba(156,140,255,0.1);}
-.assess-btn-label{font-size:14px;font-weight:600;color:${P.text};}
-.assess-btn.selected .assess-btn-label{color:${P.nebula};}
-.assess-btn-desc{font-size:12px;color:${P.muted};}
-.assess-btn.selected .assess-btn-desc{color:${P.soft};}
+/* ── Progress Bar ── */
+.onboard-progress-bar{width:100%;height:3px;background:${P.dim};border-radius:2px;margin-bottom:40px;overflow:hidden;}
+.onboard-progress-fill{height:100%;background:linear-gradient(90deg,${P.nebula},${P.gold});border-radius:2px;transition:width 0.5s ease;}
+
+/* ── Fade Transitions ── */
+.onboard-fade-in{animation:onboard-fade-in 0.3s ease forwards;}
+.onboard-fade-out{animation:onboard-fade-out 0.25s ease forwards;}
+@keyframes onboard-fade-in{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);}}
+@keyframes onboard-fade-out{from{opacity:1;transform:translateY(0);}to{opacity:0;transform:translateY(-8px);}}
+
+/* ── Question Screen ── */
+.onboard-q-count{color:${P.dim};font-size:12px;text-align:center;margin-bottom:8px;letter-spacing:0.5px;font-weight:500;}
+.onboard-q-title{color:${P.text};font-family:'Cormorant Garamond',Georgia,serif;font-size:22px;font-weight:600;text-align:center;margin-bottom:6px;line-height:1.35;}
+.onboard-q-subtitle{color:${P.muted};font-size:12px;text-align:center;margin-bottom:20px;}
+
+/* ── Options ── */
+.onboard-options{display:flex;flex-direction:column;gap:8px;margin-top:20px;}
+.onboard-option{display:flex;align-items:center;gap:12px;padding:14px 18px;background:transparent;border:1.5px solid ${P.dim};border-radius:14px;cursor:pointer;transition:all 0.2s;text-align:left;font-family:'Inter',sans-serif;}
+.onboard-option:hover{border-color:${P.nebula};background:rgba(156,140,255,0.04);}
+.onboard-option.selected{border-color:${P.nebula};background:rgba(156,140,255,0.1);box-shadow:0 0 12px rgba(156,140,255,0.08);}
+.onboard-option-text{font-size:14px;color:${P.text};font-weight:500;line-height:1.3;}
+.onboard-option.selected .onboard-option-text{color:${P.nebula};}
+.onboard-check{width:20px;height:20px;border:1.5px solid ${P.dim};border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;color:${P.nebula};flex-shrink:0;transition:all 0.2s;}
+.onboard-option.selected .onboard-check{border-color:${P.nebula};background:rgba(156,140,255,0.15);}
+
+/* ── Generating Screen ── */
+.generating-glow{width:120px;height:120px;margin:0 auto 24px;background:radial-gradient(circle,${P.gold}20 0%,${P.nebula}10 50%,transparent 70%);border-radius:50%;animation:breathe 3s ease-in-out infinite;}
+.generating-stars{display:flex;justify-content:center;gap:16px;}
+.gen-star{color:${P.gold};font-size:20px;animation:gen-pulse 1.5s ease-in-out infinite;}
+@keyframes gen-pulse{0%,100%{opacity:0.3;transform:scale(0.8);}50%{opacity:1;transform:scale(1.2);}}
 
 /* ── AI Spinner ── */
 .ai-spinner{display:inline-block;width:16px;height:16px;border:2px solid ${P.dim};border-top-color:${P.gold};border-radius:50%;animation:spin 0.8s linear infinite;}
