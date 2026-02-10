@@ -1776,7 +1776,7 @@ export default function StarFlow() {
 
     const isMonday = now.getDay() === 1;
     const isNewAccount = (userData.entries || []).length === 0;
-    const nudgeKey = `sf_nudge_${wk}`;
+    const nudgeKey = "sf_nudge_" + wk;
     const alreadyDismissed = localStorage.getItem(nudgeKey);
 
     if ((isMonday || isNewAccount) && !alreadyDismissed) {
@@ -2419,46 +2419,47 @@ export default function StarFlow() {
     {celebrate && <CelebrateModal {...celebrate} onClose={() => setCelebrate(null)} />}
 
     {/* ── Intention Nudge (Monday / new account) ── */}
-    {showIntentionNudge && (() => {
-      const isNew = entries.length === 0;
-      const dismissNudge = () => {
+    {showIntentionNudge && (
+      <div className="modal-overlay" onClick={() => {
         const n = new Date(), cw2 = weekOfMonth(n);
-        localStorage.setItem(`sf_nudge_${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-W${cw2}`, "1");
+        localStorage.setItem("sf_nudge_" + n.getFullYear() + "-" + String(n.getMonth()+1).padStart(2,"0") + "-W" + cw2, "1");
         setShowIntentionNudge(false);
-      };
-      const openIntention = () => {
-        dismissNudge();
-        setPromiseModal({ wk: cw, rk: curWeekKey });
-      };
-      return (
-        <div className="modal-overlay" onClick={dismissNudge}>
-          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ textAlign:"center" }}>
-            <div style={{ fontSize:36, marginBottom:12 }}>✦</div>
-            <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:22, fontWeight:600, marginBottom:12 }}>
-              {isNew ? "Welcome to Star Flow" : "A New Week Begins"}
-            </h2>
-            <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:15, lineHeight:1.7, marginBottom:8 }}>
-              {isNew
-                ? "Before you start, set a small intention for this week — something to move toward, not a rule to follow."
-                : "Would you like to set an intention for this week? A small promise to yourself can shape the days ahead."}
-            </p>
-            <p style={{ color:P.muted, fontSize:12, fontStyle:"italic", marginBottom:24 }}>
-              {isNew
-                ? "It can be as simple as "move for 10 minutes, three times.""
-                : "Last week is behind you. This one is open."}
-            </p>
-            <div style={{ display:"flex", gap:12, justifyContent:"center" }}>
-              <button className="btn-primary" onClick={openIntention}>
-                ✦ Set This Week's Intention
-              </button>
-              <button className="btn-ghost" onClick={dismissNudge}>
-                {isNew ? "I'll explore first" : "Maybe later"}
-              </button>
-            </div>
+      }}>
+        <div className="modal-content" onClick={e => e.stopPropagation()} style={{ textAlign:"center" }}>
+          <div style={{ fontSize:36, marginBottom:12 }}>✦</div>
+          <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:22, fontWeight:600, marginBottom:12 }}>
+            {entries.length === 0 ? "Welcome to Star Flow" : "A New Week Begins"}
+          </h2>
+          <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:15, lineHeight:1.7, marginBottom:8 }}>
+            {entries.length === 0
+              ? "Before you start, set a small intention for this week \u2014 something to move toward, not a rule to follow."
+              : "Would you like to set an intention for this week? A small promise to yourself can shape the days ahead."}
+          </p>
+          <p style={{ color:P.muted, fontSize:12, fontStyle:"italic", marginBottom:24 }}>
+            {entries.length === 0
+              ? "It can be as simple as: move for 10 minutes, three times."
+              : "Last week is behind you. This one is open."}
+          </p>
+          <div style={{ display:"flex", gap:12, justifyContent:"center" }}>
+            <button className="btn-primary" onClick={() => {
+              const n = new Date(), cw2 = weekOfMonth(n);
+              localStorage.setItem("sf_nudge_" + n.getFullYear() + "-" + String(n.getMonth()+1).padStart(2,"0") + "-W" + cw2, "1");
+              setShowIntentionNudge(false);
+              setPromiseModal({ wk: cw, rk: curWeekKey });
+            }}>
+              {"✦ Set This Week\u2019s Intention"}
+            </button>
+            <button className="btn-ghost" onClick={() => {
+              const n = new Date(), cw2 = weekOfMonth(n);
+              localStorage.setItem("sf_nudge_" + n.getFullYear() + "-" + String(n.getMonth()+1).padStart(2,"0") + "-W" + cw2, "1");
+              setShowIntentionNudge(false);
+            }}>
+              {entries.length === 0 ? "I\u2019ll explore first" : "Maybe later"}
+            </button>
           </div>
         </div>
-      );
-    })()}
+      </div>
+    )}
 
     {/* ── How Starlight Works ── */}
     {showGuide && (
