@@ -101,8 +101,9 @@ const NUM_WORDS = {
 //   profile:    { displayName, onboardingComplete, createdAt }
 //   activities: [ { id, label, color, colorLight, minDuration } ]
 //   targets:    { targetSessionsPerWeek, weeklyStarTarget, monthlyTarget, monthlyStretch }
-//   rewards:    [ "reward1", "reward2", ... ]
+//   rewards:    [ "reward1", "reward2", ... ]  (soft suggestions for promises)
 //   entries:    [ { date, activity_type, duration_min, mindful } ]
+//   promises:   { "2026-02-W1": "A quiet coffee" }  (weekly intentions)
 //   claimed:    [ "2026-02-W1", ... ]
 
 async function loadUserData(userId) {
@@ -139,6 +140,7 @@ function migrateOldData(oldData) {
     targets: { ...DEFAULT_TARGETS },
     rewards: [...DEFAULT_REWARDS],
     entries: migratedEntries,
+    promises: oldData.promises || {},
     claimed: oldData.claimed || [],
   };
 }
@@ -441,45 +443,109 @@ function LogModal({ onClose, onLog, activities, allEntries }) {
 
 // ─── DYNAMIC REWARD MODAL ────────────────────────────────────────────────────
 
-function RewardModal({ wk, rk, onClose, onClaim, rewards }) {
-  const rewardList = Array.isArray(rewards) ? rewards : DEFAULT_REWARDS;
-  const [selected, setSelected] = useState(rewardList[0] || "");
+function PromiseModal({ wk, rk, onClose, onSetPromise, suggestions }) {
+  const [text, setText] = useState("");
+  const softSuggestions = suggestions || [
+    "A quiet coffee moment",
+    "Time to read something I enjoy",
+    "Feeling steady and proud",
+    "Rest without guilt",
+    "A walk just for the joy of it",
+  ];
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content modal-reward" onClick={e => e.stopPropagation()}>
-        <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:24, fontWeight:600 }}>
-          Choose a Little Joy
+        <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:22, fontWeight:600, marginBottom:8 }}>
+          This Week
         </h2>
-        <p style={{ color:P.soft, fontSize:13, marginBottom:20 }}>Week {wk} — constellation complete</p>
-        {rewardList.map(rw => (
-          <label key={rw} className="reward-option">
-            <input type="radio" name="reward" value={rw}
-              checked={selected === rw} onChange={() => setSelected(rw)} />
-            <span style={{ color:P.text, fontSize:13 }}>{rw}</span>
-          </label>
-        ))}
-        <div style={{ display:"flex", gap:12, justifyContent:"center", marginTop:20 }}>
-          <button className="btn-primary" onClick={() => { onClaim(rk, selected); onClose(); }}>✦ Receive Your Star</button>
-          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+        <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:15, lineHeight:1.7, marginBottom:20 }}>
+          What's something you care about — or something you'd like to look forward to?
+        </p>
+        <p style={{ color:P.muted, fontSize:11, fontStyle:"italic", marginBottom:16 }}>
+          It can be small. It should feel meaningful.
+        </p>
+        <input type="text" value={text} onChange={e => setText(e.target.value)}
+          placeholder="Something for this week…"
+          className="onboard-input"
+          style={{ marginBottom:16, fontSize:14, padding:"12px 14px" }}
+          autoFocus />
+        {!text && (
+          <div style={{ marginBottom:16 }}>
+            <p style={{ color:P.dim, fontSize:11, marginBottom:8 }}>Or choose one:</p>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+              {softSuggestions.map(s => (
+                <button key={s} onClick={() => setText(s)}
+                  style={{
+                    background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:20,
+                    color:P.soft, fontSize:12, padding:"6px 12px", cursor:"pointer",
+                    fontFamily:"'Cormorant Garamond', Georgia, serif",
+                  }}>{s}</button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div style={{ display:"flex", gap:12, justifyContent:"center", marginTop:8 }}>
+          <button className="btn-primary" disabled={!text.trim()}
+            onClick={() => { onSetPromise(rk, text.trim()); onClose(); }}>
+            I'm committing to this
+          </button>
+          <button className="btn-ghost" onClick={onClose}>Not this week</button>
         </div>
       </div>
     </div>
   );
 }
 
-function CelebrateModal({ reward, onClose }) {
+function ReflectModal({ wk, rk, promise, exceeded, onClose, onClaim }) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={e => e.stopPropagation()} style={{ textAlign:"center" }}>
+        <h2 style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:22, fontWeight:600, marginBottom:16 }}>
+          {exceeded ? "You Went Beyond" : "You Showed Up"}
+        </h2>
+        <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:14, lineHeight:1.7, marginBottom:20 }}>
+          {exceeded
+            ? "You went beyond what you asked of yourself. That deserves acknowledgment."
+            : "You showed up in a way that aligns with what you said mattered."}
+        </p>
+        {promise && (
+          <div style={{
+            background:P.glass, border:`1px solid ${P.glassBorder}`, borderRadius:14,
+            padding:"16px 20px", margin:"0 auto 24px", maxWidth:300,
+          }}>
+            <p style={{ color:P.muted, fontSize:11, marginBottom:6, fontStyle:"italic" }}>
+              This week, you promised yourself:
+            </p>
+            <p style={{ color:P.gold, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:16, fontWeight:500, lineHeight:1.5 }}>
+              "{promise}"
+            </p>
+          </div>
+        )}
+        <div style={{ display:"flex", flexDirection:"column", gap:10, alignItems:"center" }}>
+          <button className="btn-primary" onClick={() => { onClaim(rk); onClose(); }}>
+            Commit to what I promised myself
+          </button>
+          <button className="btn-ghost" onClick={onClose} style={{ fontSize:13, color:P.dim }}>
+            Not this week
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CelebrateModal({ promise, onClose }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={e => e.stopPropagation()} style={{ textAlign:"center" }}>
         <div className="celebrate-burst">✦</div>
-        <p style={{ color:P.gold, fontWeight:700, fontSize:18, fontFamily:"'Cormorant Garamond', Georgia, serif" }}>
-          Constellation Complete
+        <p style={{ color:P.gold, fontWeight:600, fontSize:16, fontFamily:"'Cormorant Garamond', Georgia, serif", margin:"16px 0" }}>
+          {promise ? `"${promise}"` : "A promise kept."}
         </p>
-        <p style={{ color:P.gold, fontSize:16, fontWeight:600, margin:"16px 0" }}>{reward}</p>
-        <p style={{ color:P.soft, fontStyle:"italic", fontFamily:"'Cormorant Garamond', Georgia, serif" }}>
-          You earned this light.
+        <p style={{ color:P.soft, fontStyle:"italic", fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:14 }}>
+          You honored what mattered to you.
         </p>
-        <button className="btn-primary" onClick={onClose} style={{ marginTop:20 }}>Glow On</button>
+        <button className="btn-primary" onClick={onClose} style={{ marginTop:24 }}>Glow On</button>
       </div>
     </div>
   );
@@ -836,6 +902,7 @@ RULES FOR REWARDS (flat list of 6-8 items):
       targets: generatedTargets,
       rewards: generatedRewards.filter(r => r.trim()),
       entries: [],
+      promises: {},
       claimed: [],
     };
     await saveUserData(user.uid, userData);
@@ -1076,24 +1143,27 @@ RULES FOR REWARDS (flat list of 6-8 items):
               </div>
             )}
 
-            {/* SCREEN 6 — Rewards (Reframed) */}
+            {/* SCREEN 6 — Weekly Intentions (Reframed) */}
             {reviewStep === 5 && (
               <div style={{ textAlign: "center", paddingTop: 48 }}>
                 <h2 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 24 }}>
-                  Little Things to Look Forward To
+                  A Weekly Promise
                 </h2>
-                <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.8, maxWidth: 340, margin: "0 auto 28px" }}>
-                  When your constellation brightens, you'll unlock small rewards you choose for yourself. You don't need to decide now.
+                <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.8, maxWidth: 340, margin: "0 auto 20px" }}>
+                  Each week, you'll choose something meaningful to look forward to — a small promise to yourself.
+                </p>
+                <p style={{ color: P.muted, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 14, lineHeight: 1.7, maxWidth: 320, margin: "0 auto 28px" }}>
+                  When your constellation brightens, you honor that promise. It's not a reward you earn — it's a commitment you keep.
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 280, margin: "0 auto 36px" }}>
-                  {generatedRewards.slice(0, 2).map((rw, i) => (
+                  {["A quiet coffee moment", "Rest without guilt"].map((ex, i) => (
                     <div key={i} style={{
                       background: P.glass, border: `1px solid ${P.glassBorder}`,
                       borderRadius: 14, padding: "12px 16px",
                       display: "flex", alignItems: "center", gap: 8,
                     }}>
                       <span style={{ color: P.gold, fontSize: 12 }}>✦</span>
-                      <span style={{ color: P.soft, fontSize: 14, fontFamily: "'Cormorant Garamond', Georgia, serif" }}>{rw}</span>
+                      <span style={{ color: P.soft, fontSize: 14, fontStyle: "italic", fontFamily: "'Cormorant Garamond', Georgia, serif" }}>{ex}</span>
                     </div>
                   ))}
                 </div>
@@ -1500,9 +1570,11 @@ export default function StarFlow() {
   const activities = userData?.activities || [];
   const targets = userData?.targets || DEFAULT_TARGETS;
   const rewards = userData?.rewards || DEFAULT_REWARDS;
+  const promises = userData?.promises || {}; // { "2026-02-W2": "A quiet coffee moment" }
 
   const [showLog, setShowLog] = useState(false);
-  const [rewardModal, setRewardModal] = useState(null);
+  const [rewardModal, setRewardModal] = useState(null); // { wk, rk, wkPts }
+  const [promiseModal, setPromiseModal] = useState(null); // { wk, rk } — set intention
   const [celebrate, setCelebrate] = useState(null);
   const [viewYear, setViewYear] = useState(new Date().getFullYear());
   const [viewMonth, setViewMonth] = useState(new Date().getMonth() + 1);
@@ -1615,12 +1687,31 @@ export default function StarFlow() {
       testEntries.push({ date: todayStr2, activity_type: act.id, duration_min: act.minDuration + 10, mindful: true });
     }
 
-    updateData({ entries: testEntries, claimed: [] });
+    // Seed some weekly promises
+    const testPromises = {};
+    const curMonth = today.getMonth() + 1;
+    const curYear = today.getFullYear();
+    const curWeek = weekOfMonth(today);
+    const totalWks = Math.ceil(new Date(curYear, curMonth, 0).getDate() / 7);
+    const samplePromises = [
+      "A quiet coffee with no phone",
+      "Twenty minutes with my book",
+      "A long bath without rushing",
+      "Cooking something just for me",
+    ];
+    for (let w = 1; w <= Math.min(curWeek, totalWks); w++) {
+      const wk = `${curYear}-${String(curMonth).padStart(2,"0")}-W${w}`;
+      testPromises[wk] = samplePromises[(w - 1) % samplePromises.length];
+    }
+
+    // Claim week 1 to show "Honored" state
+    const wk1 = `${curYear}-${String(curMonth).padStart(2,"0")}-W1`;
+    updateData({ entries: testEntries, claimed: [wk1], promises: testPromises });
     setShowDev(false);
   };
 
   const clearTestData = () => {
-    updateData({ entries: [], claimed: [] });
+    updateData({ entries: [], claimed: [], promises: {} });
     setShowDev(false);
   };
 
@@ -1693,12 +1784,16 @@ export default function StarFlow() {
       updateData({ entries: entries.filter((_, i) => i !== te[idx]._i) });
     }
   };
-  const claimReward = (rk, sel) => {
+  const claimReward = (rk) => {
+    const promiseText = promises[rk] || "";
     updateData({ claimed: [...claimed, rk] });
-    setCelebrate({ reward: sel });
+    setCelebrate({ promise: promiseText });
   };
   const unclaim = (rk) => {
     updateData({ claimed: claimed.filter(c => c !== rk) });
+  };
+  const setPromise = (rk, text) => {
+    updateData({ promises: { ...promises, [rk]: text } });
   };
 
   // Onboarding complete callback
@@ -1748,6 +1843,8 @@ export default function StarFlow() {
   const goalHit = wp >= targets.weeklyStarTarget;
   const numWeeks = Math.ceil(new Date(viewYear, viewMonth, 0).getDate() / 7);
   const isCurrentMonth = viewYear === now.getFullYear() && viewMonth === now.getMonth() + 1;
+  const curWeekKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-W${cw}`;
+  const curPromise = promises[curWeekKey] || "";
 
   let milestone = "";
   if (stats.stretch) milestone = MILESTONE_COPY.monthly_stretch;
@@ -1760,11 +1857,13 @@ export default function StarFlow() {
   let peekText = "";
   if (!goalHit) {
     const remaining = Math.round((targets.weeklyStarTarget - wp) * 10) / 10;
-    peekText = `${remaining} stars from your constellation goal`;
+    peekText = curPromise
+      ? `${remaining} stars toward: "${curPromise}"`
+      : `${remaining} stars from your constellation goal`;
   } else {
-    const rewardList = Array.isArray(rewards) ? rewards : DEFAULT_REWARDS;
-    const sample = rewardList[Math.floor(Math.random() * rewardList.length)] || "a reward";
-    peekText = `Goal reached — perhaps: ${sample}`;
+    peekText = curPromise
+      ? `Ready to honor: "${curPromise}"`
+      : "Your constellation is bright this week.";
   }
 
   const prevMonth = () => { if (viewMonth === 1) { setViewMonth(12); setViewYear(viewYear - 1); } else setViewMonth(viewMonth - 1); };
@@ -1920,6 +2019,17 @@ export default function StarFlow() {
         {streak > 0
           ? <p style={{ color:P.gold, fontSize:13, marginBottom:6 }}>✦ {streak}-night glow</p>
           : <p style={{ color:P.soft, fontSize:13, marginBottom:6 }}>Every star counts, even small ones.</p>}
+        {curPromise && (
+          <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontStyle:"italic", fontSize:13, marginBottom:8, lineHeight:1.5 }}>
+            This week: "{curPromise}"
+          </p>
+        )}
+        {!curPromise && !claimed.includes(curWeekKey) && (
+          <button className="btn-ghost" style={{ fontSize:12, color:P.nebula, padding:"2px 0", marginBottom:8 }}
+            onClick={() => setPromiseModal({ wk: cw, rk: curWeekKey })}>
+            ✦ Set a weekly intention
+          </button>
+        )}
         {milestone && <p className="milestone">{milestone}</p>}
         <div className="divider" />
         <p style={{ color:P.soft, fontSize:12, fontWeight:600, marginBottom:8 }}>Constellation Goal</p>
@@ -1950,36 +2060,72 @@ export default function StarFlow() {
         })}
       </div>
 
-      {/* ── Weekend Stars ── */}
+      {/* ── Weekly Intentions ── */}
       <div className="section-header" style={{ marginTop:20 }}>
-        <h3 style={{ color:P.text, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:18 }}>☽ Weekend Stars</h3>
-        <span style={{ color:P.muted, fontSize:12 }}>Fri – Sun</span>
+        <h3 style={{ color:P.text, fontFamily:"'Cormorant Garamond', Georgia, serif", fontSize:18 }}>☽ Weekly Intentions</h3>
       </div>
       {Array.from({ length: numWeeks }, (_, i) => i + 1).map(wk => {
         const wkPts = weekStars(entries, viewYear, viewMonth, wk, activities);
         const wkGoal = wkPts >= targets.weeklyStarTarget;
-        const rk = `${viewYear}-${String(viewMonth).padStart(2,"0")}-W${wk}`, isClaimed = claimed.includes(rk);
-        const fri = fridayOf(viewYear, viewMonth, wk), sun = sundayOf(viewYear, viewMonth, wk), unlocked = new Date() >= fri;
-        const dateLabel = `Week ${wk} · ${fri.toLocaleDateString("en-US",{month:"short",day:"numeric"})}–${sun.getDate()}`;
+        const exceeded = wkPts >= targets.weeklyStarTarget * 1.5;
+        const rk = `${viewYear}-${String(viewMonth).padStart(2,"0")}-W${wk}`;
+        const isClaimed = claimed.includes(rk);
+        const hasPromise = !!promises[rk];
+        const promiseText = promises[rk] || "";
+        const [ws, we] = weekRange(viewYear, viewMonth, wk);
+        const weekPast = new Date() > we;
+        const isCurWeek = isCurrentMonth && wk === cw;
+        const dateLabel = `Week ${wk} · ${ws.toLocaleDateString("en-US",{month:"short",day:"numeric"})}–${we.getDate()}`;
+
         return (
           <GlassCard key={rk} className="section-card reward-row">
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span style={{ color:P.text, fontSize:13 }}>{dateLabel}</span>
-              {!wkGoal
-                ? <span style={{ color:P.dim, fontSize:12 }}>{Math.round((targets.weeklyStarTarget - wkPts) * 10) / 10} stars away</span>
-                : !unlocked
-                  ? <span style={{ color:P.dim, fontSize:12 }}>🔒 Fri–Sun</span>
-                  : isClaimed
-                    ? <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                        <span style={{ color:P.nebula, fontSize:13 }}>✦ Received</span>
-                        <button className="btn-ghost" style={{ fontSize:11, padding:"2px 8px" }} onClick={() => unclaim(rk)}>undo</button>
-                      </div>
-                    : <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                        <span style={{ color: P.gold, fontSize:14 }}>✦</span>
-                        <button className="btn-primary" style={{ fontSize:12, padding:"4px 14px" }}
-                          onClick={() => setRewardModal({ wk, rk })}>Receive</button>
-                      </div>
-              }
+            <div style={{ marginBottom: hasPromise ? 8 : 0 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <span style={{ color:P.text, fontSize:13 }}>{dateLabel}</span>
+                {/* State: no promise set yet, current or future week */}
+                {!hasPromise && (isCurWeek || !weekPast) && !isClaimed && (
+                  <button className="btn-ghost" style={{ fontSize:12, padding:"4px 12px", color:P.nebula }}
+                    onClick={() => setPromiseModal({ wk, rk })}>
+                    Set intention
+                  </button>
+                )}
+                {/* State: no promise, past week, never claimed */}
+                {!hasPromise && weekPast && !isCurWeek && !isClaimed && (
+                  <span style={{ color:P.dim, fontSize:12 }}>No intention set</span>
+                )}
+                {/* State: goal not met yet */}
+                {hasPromise && !wkGoal && !weekPast && (
+                  <span style={{ color:P.dim, fontSize:12 }}>
+                    {Math.round((targets.weeklyStarTarget - wkPts) * 10) / 10} stars to go
+                  </span>
+                )}
+                {/* State: goal met, not claimed — ready to reflect */}
+                {hasPromise && wkGoal && !isClaimed && (
+                  <button className="btn-primary" style={{ fontSize:12, padding:"4px 14px" }}
+                    onClick={() => setRewardModal({ wk, rk, exceeded })}>
+                    Reflect
+                  </button>
+                )}
+                {/* State: goal not met, week is over */}
+                {hasPromise && !wkGoal && weekPast && !isClaimed && (
+                  <span style={{ color:P.soft, fontSize:12, fontStyle:"italic" }}>
+                    Your intention still matters
+                  </span>
+                )}
+                {/* State: claimed */}
+                {isClaimed && (
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ color:P.gold, fontSize:13 }}>✦ Honored</span>
+                    <button className="btn-ghost" style={{ fontSize:11, padding:"2px 8px" }} onClick={() => unclaim(rk)}>undo</button>
+                  </div>
+                )}
+              </div>
+              {/* Show promise text if set */}
+              {hasPromise && (
+                <p style={{ color:P.soft, fontFamily:"'Cormorant Garamond', Georgia, serif", fontStyle:"italic", fontSize:13, marginTop:6, lineHeight:1.5 }}>
+                  "{promiseText}"
+                </p>
+              )}
             </div>
           </GlassCard>
         );
@@ -1990,8 +2136,10 @@ export default function StarFlow() {
 
     {/* ── Modals ── */}
     {showLog && <LogModal onClose={() => setShowLog(false)} onLog={addEntry} activities={activities} allEntries={entries} />}
-    {rewardModal && <RewardModal {...rewardModal} onClose={() => setRewardModal(null)}
-      onClaim={(rk, sel) => claimReward(rk, sel)} rewards={rewards} />}
+    {promiseModal && <PromiseModal {...promiseModal} onClose={() => setPromiseModal(null)}
+      onSetPromise={(rk, text) => setPromise(rk, text)} suggestions={rewards} />}
+    {rewardModal && <ReflectModal {...rewardModal} promise={promises[rewardModal.rk]}
+      onClose={() => setRewardModal(null)} onClaim={(rk) => claimReward(rk)} />}
     {celebrate && <CelebrateModal {...celebrate} onClose={() => setCelebrate(null)} />}
 
     {/* ── How Starlight Works ── */}
