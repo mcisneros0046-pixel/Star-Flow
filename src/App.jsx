@@ -777,6 +777,20 @@ const MOVEMENT_TO_PRESET = {
   "I'm still exploring": null,
 };
 
+const FOCUS_PILLARS = [
+  { id: "movement", label: "Movement", color: "#6EC5FF" },
+  { id: "mind", label: "Mind", color: "#9C8CFF" },
+  { id: "creative", label: "Creative", color: "#F3D27A" },
+  { id: "discipline", label: "Discipline", color: "#6EFFC5" },
+  { id: "energy", label: "Energy", color: "#FFB86E" },
+  { id: "financial", label: "Financial", color: "#C9D1FF" },
+];
+
+const REWARD_SUGGESTIONS = [
+  "Coffee date", "New book", "Nail appointment",
+  "Guilt-free rest day", "Saving toward something bigger",
+];
+
 function OnboardingWizard({ user, onComplete }) {
   const [phase, setPhase] = useState("welcome"); // welcome | questions | generating | review
   const [displayName, setDisplayName] = useState(user.displayName || "");
@@ -785,7 +799,10 @@ function OnboardingWizard({ user, onComplete }) {
   const [fadeState, setFadeState] = useState("in"); // in | out
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
-  const [reviewStep, setReviewStep] = useState(0); // 0–6 for 7 post-assessment screens
+  const [reviewStep, setReviewStep] = useState(0); // 0–4 for 5 walkthrough screens
+  const [focusPillars, setFocusPillars] = useState([]);
+  const [walkthroughReward, setWalkthroughReward] = useState("");
+  const [launching, setLaunching] = useState(false);
 
   // AI-generated plan
   const [generatedActivities, setGeneratedActivities] = useState([]);
@@ -1001,26 +1018,33 @@ RULES FOR REWARDS (flat list of 6-8 items):
 
   // Final save
   const handleLaunch = async () => {
+    // Compute current week key for the first promise
+    const now = new Date();
+    const wk = Math.ceil(now.getDate() / 7);
+    const rk = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-W${wk}`;
+    const firstPromise = walkthroughReward.trim() ? { [rk]: walkthroughReward.trim() } : {};
+
     const userData = {
       profile: {
         displayName,
         onboardingComplete: true,
         createdAt: new Date().toISOString(),
         assessmentAnswers: answers,
+        weeklyFocus: focusPillars,
       },
       activities: generatedActivities,
       targets: generatedTargets,
       rewards: generatedRewards.filter(r => r.trim()),
       entries: [],
-      promises: {},
+      promises: firstPromise,
       claimed: [],
     };
     await saveUserData(user.uid, userData);
     onComplete(userData);
   };
 
-  // Progress percentage — questions flow into review steps seamlessly
-  const totalReviewSteps = 7;
+  // Progress percentage — questions flow into walkthrough seamlessly
+  const totalReviewSteps = 5;
   const progress = phase === "welcome" ? 0
     : phase === "questions" ? ((qIndex + 1) / (totalQuestions + totalReviewSteps)) * 100
     : phase === "generating" ? ((totalQuestions) / (totalQuestions + totalReviewSteps)) * 100
@@ -1122,197 +1146,194 @@ RULES FOR REWARDS (flat list of 6-8 items):
           </div>
         )}
 
-        {/* ── POST-ASSESSMENT FLOW (7 screens) ── */}
-        {phase === "review" && (
+        {/* ── POST-ASSESSMENT WALKTHROUGH (5 ritual screens) ── */}
+        {phase === "review" && !launching && (
           <div className={`onboard-step onboard-fade-${fadeState}`} key={`review-${reviewStep}`}>
 
-            {/* SCREEN 1 — Arrival */}
+            {/* ✦ STEP 1 — Welcome to Star Flow */}
             {reviewStep === 0 && (
               <div style={{ textAlign: "center", paddingTop: 40 }}>
                 <div className="onboard-glow" />
-                <h1 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 48, marginBottom: 16 }}>✦</h1>
-                <h2 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 28, fontWeight: 600, marginBottom: 20 }}>
-                  Your Sky Is Set
+                <div className="ritual-star-hero">✦</div>
+                <h2 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 28, fontWeight: 600, marginBottom: 12 }}>
+                  Welcome to Star Flow
                 </h2>
+                <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 16, lineHeight: 1.7, maxWidth: 340, margin: "0 auto 20px" }}>
+                  This is your space to commit to what you promised yourself.
+                </p>
                 {aiExplanation && (
-                  <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 15, lineHeight: 1.7, maxWidth: 340, margin: "0 auto 32px" }}>
+                  <p style={{ color: P.muted, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 14, lineHeight: 1.7, maxWidth: 320, margin: "0 auto 16px" }}>
                     {aiExplanation}
                   </p>
                 )}
-                {!aiExplanation && (
-                  <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 15, lineHeight: 1.7, maxWidth: 340, margin: "0 auto 32px" }}>
-                    This sky was shaped around you. The stars don't ask you to push — they ask you to return.
-                  </p>
-                )}
+                <p style={{ color: P.soft, fontSize: 13, lineHeight: 1.8, maxWidth: 310, margin: "0 auto 36px" }}>
+                  Star Flow turns your habits into stars. Each action earns light. Each week, you build your own constellation.
+                </p>
                 {aiError && (
-                  <p style={{ color: P.muted, fontSize: 12, marginBottom: 16 }}>
-                    {aiError} We used thoughtful defaults.
-                  </p>
+                  <p style={{ color: P.muted, fontSize: 12, marginBottom: 16 }}>{aiError} We used thoughtful defaults.</p>
                 )}
                 <button className="btn-primary btn-large" onClick={() => fadeTo(() => setReviewStep(1))}>
-                  Continue
+                  ✨ Begin My Week
                 </button>
               </div>
             )}
 
-            {/* SCREEN 2 — Philosophy */}
+            {/* ⭐ STEP 2 — Choose Your Weekly Focus */}
             {reviewStep === 1 && (
               <div style={{ textAlign: "center", paddingTop: 48 }}>
-                <h2 style={{ color: P.text, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 24 }}>
-                  How Progress Works Here
+                <h2 style={{ color: P.text, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 12 }}>
+                  What matters to you this week?
                 </h2>
-                <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.8, maxWidth: 340, margin: "0 auto 40px" }}>
-                  Star Flow rewards showing up, not pushing harder. Small sessions still count. Returning after a pause matters most.
+                <p style={{ color: P.muted, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 14, marginBottom: 28, maxWidth: 300, margin: "0 auto 28px" }}>
+                  You don't have to change everything. Just choose where to shine.
                 </p>
-                <button className="btn-primary btn-large" onClick={() => fadeTo(() => setReviewStep(2))}>
-                  That feels right
+                <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 10, maxWidth: 360, margin: "0 auto 12px" }}>
+                  {FOCUS_PILLARS.map(p => {
+                    const sel = focusPillars.includes(p.id);
+                    const atMax = focusPillars.length >= 3 && !sel;
+                    return (
+                      <button key={p.id}
+                        disabled={atMax}
+                        onClick={() => setFocusPillars(prev =>
+                          prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]
+                        )}
+                        className="ritual-pillar"
+                        style={{
+                          background: sel ? `color-mix(in srgb, ${p.color} 12%, transparent)` : "transparent",
+                          borderColor: sel ? p.color : P.dim,
+                          color: sel ? p.color : (atMax ? P.dim : P.soft),
+                          opacity: atMax ? 0.4 : 1,
+                        }}>
+                        <span style={{ marginRight: 6, fontSize: 11 }}>✦</span>{p.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p style={{ color: P.dim, fontSize: 11, marginTop: 8, marginBottom: 32 }}>Select up to 3</p>
+                <button className="btn-primary btn-large"
+                  onClick={() => fadeTo(() => setReviewStep(2))}
+                  disabled={focusPillars.length === 0}>
+                  Continue
                 </button>
               </div>
             )}
 
-            {/* SCREEN 3 — Starlight, Gently Explained */}
+            {/* 🌠 STEP 3 — How Stars Work */}
             {reviewStep === 2 && (
               <div style={{ textAlign: "center", paddingTop: 48 }}>
-                <h2 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 32 }}>
-                  About Starlight
+                <h2 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 36 }}>
+                  How Stars Work
                 </h2>
-                <div style={{ textAlign: "left", maxWidth: 340, margin: "0 auto 24px" }}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 18 }}>
-                    <span style={{ color: P.aurora, fontSize: 14 }}>✦</span>
-                    <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.6 }}>
-                      Showing up creates starlight
-                    </p>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 18 }}>
-                    <span style={{ color: P.gold, fontSize: 14 }}>✦</span>
-                    <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.6 }}>
-                      Presence adds a little glow
-                    </p>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 18 }}>
-                    <span style={{ color: P.nebula, fontSize: 14 }}>✦</span>
-                    <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.6 }}>
-                      Coming back after a break shines brightest
-                    </p>
-                  </div>
+                <div style={{ textAlign: "left", maxWidth: 310, margin: "0 auto 32px" }}>
+                  {[
+                    { text: "Each activity earns at least one star", color: P.aurora },
+                    { text: "Harder tasks and longer sessions earn more", color: P.gold },
+                    { text: "Consistency builds momentum and light", color: P.nebula },
+                  ].map((item, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 20 }}>
+                      <span style={{ color: item.color, fontSize: 16, flexShrink: 0 }}>✦</span>
+                      <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.6 }}>
+                        {item.text}
+                      </p>
+                    </div>
+                  ))}
                 </div>
-                <p style={{ color: P.muted, fontSize: 12, fontStyle: "italic", maxWidth: 300, margin: "0 auto 36px", lineHeight: 1.6 }}>
-                  There are no daily limits. Some efforts simply shine more softly.
-                </p>
+                <div style={{ display: "flex", justifyContent: "center", gap: 16, maxWidth: 340, margin: "0 auto 36px" }}>
+                  {[
+                    { label: "Bronze", sub: "You showed up", color: P.tierBronze },
+                    { label: "Silver", sub: "You committed", color: P.tierSilver },
+                    { label: "Gold", sub: "You exceeded", color: P.tierGold },
+                  ].map(t => (
+                    <div key={t.label} style={{ textAlign: "center", flex: 1, padding: "14px 8px", background: P.glass, border: `1px solid ${P.glassBorder}`, borderRadius: 16 }}>
+                      <span style={{ color: t.color, fontSize: 22, display: "block", marginBottom: 8 }}>✦</span>
+                      <p style={{ color: t.color, fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{t.label}</p>
+                      <p style={{ color: P.muted, fontSize: 11, lineHeight: 1.4 }}>{t.sub}</p>
+                    </div>
+                  ))}
+                </div>
                 <button className="btn-primary btn-large" onClick={() => fadeTo(() => setReviewStep(3))}>
-                  Continue
+                  I'm ready to earn stars
                 </button>
               </div>
             )}
 
-            {/* SCREEN 4 — Movement Possibilities */}
+            {/* 🎁 STEP 4 — Set Your Reward Intention */}
             {reviewStep === 3 && (
               <div style={{ textAlign: "center", paddingTop: 48 }}>
-                <h2 style={{ color: P.text, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 12 }}>
-                  Ways You Might Move
+                <h2 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 8 }}>
+                  What would make this week feel worth it?
                 </h2>
-                <p style={{ color: P.muted, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 14, marginBottom: 28 }}>
-                  These are invitations, not requirements.
+                <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 15, marginBottom: 28 }}>
+                  If you hit your goal, what are you claiming?
                 </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 320, margin: "0 auto 36px" }}>
-                  {generatedActivities.map(act => (
-                    <div key={act.id} style={{
-                      background: act.colorLight || P.glass,
-                      border: `1px solid color-mix(in srgb, ${act.color} 25%, transparent)`,
-                      borderRadius: 16, padding: "14px 18px",
-                      display: "flex", alignItems: "center", gap: 10,
-                    }}>
-                      <span style={{ color: act.color, fontSize: 16 }}>✦</span>
-                      <span style={{ color: P.text, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 17, fontWeight: 500 }}>
-                        {act.label}
-                      </span>
-                    </div>
+                <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 8, maxWidth: 360, margin: "0 auto 20px" }}>
+                  {[...new Set([...REWARD_SUGGESTIONS, ...(generatedRewards || []).slice(0, 3)])].slice(0, 8).map(r => (
+                    <button key={r}
+                      onClick={() => setWalkthroughReward(walkthroughReward === r ? "" : r)}
+                      className="ritual-reward-chip"
+                      style={{
+                        background: walkthroughReward === r ? `color-mix(in srgb, ${P.gold} 12%, transparent)` : P.glass,
+                        borderColor: walkthroughReward === r ? P.gold : P.glassBorder,
+                        color: walkthroughReward === r ? P.gold : P.soft,
+                      }}>
+                      {r}
+                    </button>
                   ))}
                 </div>
-                <button className="btn-primary btn-large" onClick={() => fadeTo(() => setReviewStep(4))}>
+                <div style={{ maxWidth: 300, margin: "0 auto 12px" }}>
+                  <input
+                    type="text"
+                    className="onboard-input"
+                    placeholder="Or write your own…"
+                    value={walkthroughReward}
+                    onChange={e => setWalkthroughReward(e.target.value)}
+                    style={{ textAlign: "center", fontSize: 14 }}
+                  />
+                </div>
+                <p style={{ color: P.muted, fontFamily: "'Cormorant Garamond', Georgia, serif", fontStyle: "italic", fontSize: 13, maxWidth: 280, margin: "0 auto 32px", lineHeight: 1.6 }}>
+                  You're not earning permission. You're honoring commitment.
+                </p>
+                <button className="btn-primary btn-large"
+                  onClick={() => fadeTo(() => setReviewStep(4))}
+                  disabled={!walkthroughReward.trim()}>
                   Continue
                 </button>
               </div>
             )}
 
-            {/* SCREEN 5 — Your First Week (Abstract) */}
+            {/* 🌙 STEP 5 — Commitment Screen */}
             {reviewStep === 4 && (
-              <div style={{ textAlign: "center", paddingTop: 48 }}>
-                <h2 style={{ color: P.text, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 24 }}>
-                  This Week's Focus
-                </h2>
-                <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.8, maxWidth: 320, margin: "0 auto 20px" }}>
-                  A few intentional moments this week are more than enough. Your constellation grows through gentle consistency.
-                </p>
-                <p style={{ color: P.muted, fontSize: 12, fontStyle: "italic", maxWidth: 300, margin: "0 auto 40px" }}>
-                  You'll see your progress take shape over time.
-                </p>
-                <button className="btn-primary btn-large" onClick={() => fadeTo(() => setReviewStep(5))}>
-                  I'm ready
-                </button>
-              </div>
-            )}
-
-            {/* SCREEN 6 — Weekly Intentions (Reframed) */}
-            {reviewStep === 5 && (
-              <div style={{ textAlign: "center", paddingTop: 48 }}>
-                <h2 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 24, fontWeight: 600, marginBottom: 24 }}>
-                  A Weekly Promise
-                </h2>
-                <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.8, maxWidth: 340, margin: "0 auto 20px" }}>
-                  Each week, you'll choose something meaningful to look forward to — a small promise to yourself.
-                </p>
-                <p style={{ color: P.muted, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 14, lineHeight: 1.7, maxWidth: 320, margin: "0 auto 28px" }}>
-                  When your constellation brightens, you honor that promise. It's not a reward you earn — it's a commitment you keep.
-                </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 280, margin: "0 auto 36px" }}>
-                  {["A quiet coffee moment", "Rest without guilt"].map((ex, i) => (
-                    <div key={i} style={{
-                      background: P.glass, border: `1px solid ${P.glassBorder}`,
-                      borderRadius: 14, padding: "12px 16px",
-                      display: "flex", alignItems: "center", gap: 8,
-                    }}>
-                      <span style={{ color: P.gold, fontSize: 12 }}>✦</span>
-                      <span style={{ color: P.soft, fontSize: 14, fontStyle: "italic", fontFamily: "'Cormorant Garamond', Georgia, serif" }}>{ex}</span>
-                    </div>
-                  ))}
-                </div>
-                <button className="btn-primary btn-large" onClick={() => fadeTo(() => setReviewStep(6))}>
-                  Continue
-                </button>
-              </div>
-            )}
-
-            {/* SCREEN 7 — Day One Invitation */}
-            {reviewStep === 6 && (
-              <div style={{ textAlign: "center", paddingTop: 60 }}>
+              <div style={{ textAlign: "center", paddingTop: 80 }}>
                 <div className="onboard-glow" />
-                <h1 style={{ color: P.gold, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 48, marginBottom: 16 }}>✦</h1>
-                <h2 style={{ color: P.text, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 28, fontWeight: 600, marginBottom: 24 }}>
-                  Day One
-                </h2>
-                <p style={{ color: P.soft, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 15, lineHeight: 1.8, maxWidth: 320, margin: "0 auto 40px" }}>
-                  Today can be simple. A short walk, a stretch, or even just noticing your body counts.
+                <div className="commitment-star">✦</div>
+                <p style={{ color: P.text, fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 20, fontWeight: 500, lineHeight: 1.7, maxWidth: 280, margin: "0 auto 48px" }}>
+                  I commit to what I promised myself.
                 </p>
-                <button className="btn-primary btn-large" onClick={handleLaunch}>
-                  Begin gently
+                <button className="btn-primary btn-large commitment-btn" onClick={() => {
+                  setLaunching(true);
+                  setTimeout(() => handleLaunch(), 2800);
+                }}>
+                  Start My Week
                 </button>
-                <p style={{ marginTop: 20 }}>
-                  <button className="btn-ghost" onClick={handleLaunch}
-                    style={{ fontSize: 13, color: P.dim }}>
-                    I'll start later
-                  </button>
-                </p>
               </div>
             )}
 
-            {/* Back navigation (screens 1–6) */}
-            {reviewStep > 0 && reviewStep < 6 && (
+            {/* Back navigation (screens 1–3) */}
+            {reviewStep > 0 && reviewStep < 4 && (
               <div style={{ textAlign: "center", marginTop: 16 }}>
                 <button className="btn-ghost" onClick={() => fadeTo(() => setReviewStep(s => s - 1))}
                   style={{ fontSize: 13, color: P.dim }}>Back</button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Your Constellation Begins — overlay ── */}
+        {phase === "review" && launching && (
+          <div className="constellation-overlay">
+            <div className="onboard-glow" />
+            <div className="constellation-burst">✦</div>
+            <p className="constellation-text">Your constellation begins.</p>
           </div>
         )}
 
@@ -1606,7 +1627,7 @@ function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted, o
                       const deviceInfo = `\n\n— Device Info —\nBrowser: ${navigator.userAgent}\nScreen: ${window.innerWidth}×${window.innerHeight}\nDate: ${new Date().toString()}`;
                       const body = encodeURIComponent(bugText.trim() + deviceInfo);
                       const subject = encodeURIComponent("StarFlow Bug Report");
-                      window.open(`mailto:mcisneros0046@icloud.com?subject=${subject}&body=${body}`, "_blank");
+                      window.open(`mailto:starflow.bugs@gmail.com?subject=${subject}&body=${body}`, "_blank");
                       setBugSent(true);
                       setTimeout(() => { setBugSent(false); setBugText(""); setShowBugForm(false); }, 2500);
                     }}
@@ -3046,6 +3067,19 @@ textarea.onboard-input{font-family:'Inter',sans-serif;line-height:1.5;}
 .generating-stars{display:flex;justify-content:center;gap:16px;}
 .gen-star{color:${P.gold};font-size:20px;animation:gen-pulse 1.5s ease-in-out infinite;}
 @keyframes gen-pulse{0%,100%{opacity:0.3;transform:scale(0.8);}50%{opacity:1;transform:scale(1.2);}}
+
+/* ── Ritual Walkthrough ── */
+.ritual-star-hero{color:${P.gold};font-family:'Cormorant Garamond',Georgia,serif;font-size:56px;margin-bottom:12px;animation:breathe 4s ease-in-out infinite;}
+.ritual-pillar{border:1.5px solid ${P.dim};padding:10px 20px;border-radius:20px;font-size:14px;font-weight:500;cursor:pointer;transition:all 0.25s;font-family:'Inter',sans-serif;background:transparent;}
+.ritual-pillar:hover:not(:disabled){border-color:${P.soft};}
+.ritual-reward-chip{border:1px solid ${P.glassBorder};padding:8px 16px;border-radius:20px;font-size:13px;cursor:pointer;transition:all 0.25s;font-family:'Inter',sans-serif;background:${P.glass};}
+.ritual-reward-chip:hover{border-color:${P.gold};color:${P.gold};}
+.commitment-star{color:${P.gold};font-family:'Cormorant Garamond',Georgia,serif;font-size:64px;margin-bottom:24px;animation:commitment-glow 3s ease-in-out infinite;}
+@keyframes commitment-glow{0%,100%{text-shadow:0 0 20px rgba(243,210,122,0.3);transform:scale(1);}50%{text-shadow:0 0 40px rgba(243,210,122,0.6),0 0 80px rgba(243,210,122,0.2);transform:scale(1.1);}}
+.commitment-btn:active{transform:scale(0.96);box-shadow:0 0 30px rgba(243,210,122,0.4);}
+.constellation-overlay{text-align:center;padding-top:140px;animation:fade-in 0.8s ease;}
+.constellation-burst{color:${P.gold};font-family:'Cormorant Garamond',Georgia,serif;font-size:72px;margin-bottom:24px;animation:spin-burst 1.5s ease,commitment-glow 3s ease-in-out infinite 1.5s;}
+.constellation-text{color:${P.gold};font-family:'Cormorant Garamond',Georgia,serif;font-size:22px;font-weight:500;animation:fade-in 1s ease 0.6s both;}
 
 /* ── AI Spinner ── */
 .ai-spinner{display:inline-block;width:16px;height:16px;border:2px solid ${P.dim};border-top-color:${P.gold};border-radius:50%;animation:spin 0.8s linear infinite;}
