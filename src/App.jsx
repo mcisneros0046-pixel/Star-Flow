@@ -715,40 +715,10 @@ const ONBOARD_QUESTIONS = [
     options: ["Mental health and emotional balance", "Physical strength", "Appearance or aesthetics", "Discipline and routine", "Recovery and gentleness"],
   },
   {
-    id: "life_fit", type: "single",
-    question: "How do you want movement to fit into your life?",
-    options: ["A grounding ritual", "A personal challenge", "A non-negotiable habit", "A flexible support system"],
-  },
-  {
-    id: "motivation_style", type: "single",
-    question: "What motivates you most?",
-    options: ["Checking things off", "Seeing visual progress", "Earning rewards", "Internal pride"],
-  },
-  {
-    id: "missed_day", type: "single",
-    question: "If you miss a day, what helps you come back?",
-    options: ["Gentle reassurance", "Clear structure to restart", "Accountability", "Permission to rest"],
-  },
-  {
-    id: "tracking_comfort", type: "single",
-    question: "How do you feel about tracking progress?",
-    options: ["I enjoy it", "I'm neutral", "Only if it's simple", "I prefer minimal tracking"],
-  },
-  {
     id: "reward_types", type: "multi",
     question: "What actually feels rewarding to you?",
     subtitle: "Select all that apply",
     options: ["Coffee or small treats", "Beauty or self-care items", "Experiences or outings", "Extra rest or free time", "Visual achievements (stars, glow, milestones)"],
-  },
-  {
-    id: "reward_pacing", type: "single",
-    question: "When do rewards feel best?",
-    options: ["Small and frequent", "Milestone-based", "Surprise-based", "Long-term goals"],
-  },
-  {
-    id: "progress_style", type: "single",
-    question: "What makes progress feel good rather than stressful?",
-    options: ["Streaks", "Point accumulation", "Personal bests", "Simply showing up"],
   },
   {
     id: "tone_preference", type: "single",
@@ -903,14 +873,14 @@ ${JSON.stringify(selectedPresets.map(a => ({ id: a.id, label: a.label, color: a.
 CRITICAL GUIDELINES BASED ON THEIR ANSWERS:
 - Movement feeling "${answers.movement_feeling || ""}" → adjust difficulty & encouragement style
 - Past friction: "${(answers.past_friction || []).join(", ")}" → remove those barriers
+- Intention: "${answers.intention || ""}" → shape the plan's philosophy and voice
 - Current baseline "${answers.current_baseline || ""}" → calibrate minimum durations
 - Time realism "${answers.time_realism || ""}" → set minDuration to fit their schedule
+- Three-month vision: "${(answers.three_month_vision || []).join(", ")}" → align plan with their aspirations
 - Goal focus "${answers.goal_focus || ""}" → weight toward their priority
-- Motivation style "${answers.motivation_style || ""}" → shape encouragement
 - Reward preferences: "${(answers.reward_types || []).join(", ")}" → personalize reward suggestions
 - Tone preference "${answers.tone_preference || ""}" → inform the explanation voice
 - Boundaries: "${(answers.boundaries || []).join(", ")}" → NEVER include these in rewards or language
-- Tracking comfort "${answers.tracking_comfort || ""}" → simpler setup for minimal trackers
 
 THE SCORING MODEL (do NOT change this, it is built into the app):
 - Every logged session ALWAYS earns at least 1 full star — no minimums, no zero states
