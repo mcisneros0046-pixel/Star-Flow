@@ -1331,6 +1331,9 @@ function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted, o
   const [deleteError, setDeleteError] = useState("");
   const [deleteTyped, setDeleteTyped] = useState("");
   const [saved, setSaved] = useState(false);
+  const [bugText, setBugText] = useState("");
+  const [bugSent, setBugSent] = useState(false);
+  const [showBugForm, setShowBugForm] = useState(false);
   const fileInputRef = useRef(null);
 
   // ── Activities tab state ──
@@ -1564,6 +1567,56 @@ function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted, o
                 <span className="settings-info-value">{totalClaimed}</span>
               </div>
             </div>
+          </div>
+
+          {/* ── Report a Bug ── */}
+          <div className="settings-section">
+            <h4 className="settings-section-title">Feedback</h4>
+            {!showBugForm ? (
+              <button className="settings-action-btn" onClick={() => setShowBugForm(true)}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                Report a Bug
+              </button>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                <p style={{ color:P.soft, fontSize:12, lineHeight:1.5 }}>
+                  Describe what happened and what you expected. Include as much detail as you can.
+                </p>
+                <textarea
+                  className="onboard-input"
+                  rows={4}
+                  placeholder="e.g. I logged a session on Tuesday evening but it showed up on Wednesday…"
+                  value={bugText}
+                  onChange={e => setBugText(e.target.value)}
+                  style={{ resize:"vertical", minHeight:80 }}
+                />
+                {bugSent && (
+                  <p style={{ color:P.gold, fontSize:12, textAlign:"center" }}>
+                    ✓ Bug report sent — thank you!
+                  </p>
+                )}
+                <div style={{ display:"flex", gap:10 }}>
+                  <button
+                    className="btn-primary"
+                    disabled={!bugText.trim() || bugSent}
+                    style={{ flex:1, fontSize:13 }}
+                    onClick={() => {
+                      const deviceInfo = `\n\n— Device Info —\nBrowser: ${navigator.userAgent}\nScreen: ${window.innerWidth}×${window.innerHeight}\nDate: ${new Date().toString()}`;
+                      const body = encodeURIComponent(bugText.trim() + deviceInfo);
+                      const subject = encodeURIComponent("StarFlow Bug Report");
+                      window.open(`mailto:mcisneros0046@icloud.com?subject=${subject}&body=${body}`, "_blank");
+                      setBugSent(true);
+                      setTimeout(() => { setBugSent(false); setBugText(""); setShowBugForm(false); }, 2500);
+                    }}
+                  >
+                    Send Report
+                  </button>
+                  <button className="btn-ghost" onClick={() => { setShowBugForm(false); setBugText(""); }}>Cancel</button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="settings-section">
