@@ -211,7 +211,7 @@ function calcMissedDays(dateStr, allEntries) {
   let missed = 0;
   for (let i = 1; i <= 14; i++) {
     const prev = new Date(d); prev.setDate(prev.getDate() - i);
-    const prevStr = prev.toISOString().slice(0, 10);
+    const prevStr = localDateStr(prev);
     if (allEntries.some(e => e.date === prevStr)) break;
     missed++;
   }
@@ -223,7 +223,8 @@ function calcPts(entry) {
   return 1; // always counts
 }
 
-function todayStr() { return new Date().toISOString().slice(0, 10); }
+function localDateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function todayStr() { return localDateStr(new Date()); }
 function entriesFor(entries, ds) { return entries.filter(e => e.date === ds); }
 
 function dailyStars(allEntries, ds, activities) {
@@ -246,7 +247,7 @@ function weekStars(allEntries, y, m, wn, activities) {
   const [s, e] = weekRange(y, m, wn);
   let total = 0; const cur = new Date(s);
   while (cur <= e) {
-    total += dailyStars(allEntries, cur.toISOString().slice(0, 10), activities);
+    total += dailyStars(allEntries, localDateStr(cur), activities);
     cur.setDate(cur.getDate() + 1);
   }
   return Math.round(total * 10) / 10;
@@ -275,7 +276,7 @@ function calcStreak(entries, activities) {
   const active = new Set(entries.filter(e => calcPts(e) > 0).map(e => e.date));
   if (!active.size) return 0;
   let streak = 0, d = new Date();
-  while (active.has(d.toISOString().slice(0, 10))) { streak++; d.setDate(d.getDate() - 1); }
+  while (active.has(localDateStr(d))) { streak++; d.setDate(d.getDate() - 1); }
   return streak;
 }
 
@@ -2143,7 +2144,7 @@ export default function StarFlow() {
     for (let daysAgo = 13; daysAgo >= 0; daysAgo--) {
       const d = new Date(today);
       d.setDate(d.getDate() - daysAgo);
-      const ds = d.toISOString().slice(0, 10);
+      const ds = localDateStr(d);
 
       // ~70% chance of activity on any day (realistic consistency)
       if (Math.random() > 0.7) continue; // skip day — creates reentry gaps
@@ -2168,7 +2169,7 @@ export default function StarFlow() {
     }
 
     // Also add 1 entry for today so Now section is populated
-    const todayStr2 = today.toISOString().slice(0, 10);
+    const todayStr2 = localDateStr(today);
     if (!testEntries.some(e => e.date === todayStr2)) {
       const act = activities[0];
       testEntries.push({ date: todayStr2, activity_type: act.id, duration_min: act.minDuration + 10, mindful: true });
@@ -2339,7 +2340,7 @@ export default function StarFlow() {
   const wCur = new Date(weekStart);
   const [, weekEnd] = weekRange(now.getFullYear(), now.getMonth() + 1, cw);
   while (wCur <= weekEnd && wCur <= now) {
-    const ds = wCur.toISOString().slice(0, 10);
+    const ds = localDateStr(wCur);
     const dayEntries = entriesFor(entries, ds);
     if (dayEntries.length > 0) { weekActiveDays++; weekMinutes += dayEntries.reduce((s, e) => s + (e.duration_min || 0), 0); }
     wCur.setDate(wCur.getDate() + 1);
