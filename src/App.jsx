@@ -118,6 +118,17 @@ async function loadUserData(userId) {
         await setDoc(doc(db, "users", userId), migrated);
         return migrated;
       }
+      // ── MIGRATION: 10x starlight scale (old targets were ~2-30, new are ~20-300) ──
+      if (data.targets && data.targets.weeklyStarTarget < 15) {
+        console.log("Migrating targets to starlight scale (10x)…");
+        data.targets = {
+          ...data.targets,
+          weeklyStarTarget: Math.round(data.targets.weeklyStarTarget * 10),
+          monthlyTarget: Math.round(data.targets.monthlyTarget * 10),
+          monthlyStretch: Math.round(data.targets.monthlyStretch * 10),
+        };
+        await setDoc(doc(db, "users", userId), data);
+      }
       return data;
     }
   } catch (err) { console.error("Load error:", err); }
