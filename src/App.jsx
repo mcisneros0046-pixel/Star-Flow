@@ -282,6 +282,30 @@ function calcStreak(entries, activities) {
 
 function goalMet(pts, targets) { return pts >= targets.weeklyStarTarget; }
 
+// ── Tier System ──
+// Bronze = showed up (60% of weekly target)
+// Silver = committed (100% of weekly target)  
+// Gold = exceeded (140% of weekly target)
+function getTier(pts, weeklyTarget) {
+  const bronzeThreshold = Math.round(weeklyTarget * 0.6 * 10) / 10;
+  const silverThreshold = weeklyTarget;
+  const goldThreshold = Math.round(weeklyTarget * 1.4 * 10) / 10;
+  if (pts >= goldThreshold) return { tier: "gold", label: "Gold", sub: "You exceeded", color: P.tierGold, threshold: goldThreshold };
+  if (pts >= silverThreshold) return { tier: "silver", label: "Silver", sub: "You committed", color: P.tierSilver, threshold: silverThreshold };
+  if (pts >= bronzeThreshold) return { tier: "bronze", label: "Bronze", sub: "You showed up", color: P.tierBronze, threshold: bronzeThreshold };
+  return { tier: "none", label: "", sub: "", color: P.dim, threshold: 0 };
+}
+function nextTierInfo(pts, weeklyTarget) {
+  const t = getTier(pts, weeklyTarget);
+  const bronzeAt = Math.round(weeklyTarget * 0.6 * 10) / 10;
+  const silverAt = weeklyTarget;
+  const goldAt = Math.round(weeklyTarget * 1.4 * 10) / 10;
+  if (t.tier === "none") return { label: "Bronze", color: P.tierBronze, remaining: Math.round((bronzeAt - pts) * 10) / 10 };
+  if (t.tier === "bronze") return { label: "Silver", color: P.tierSilver, remaining: Math.round((silverAt - pts) * 10) / 10 };
+  if (t.tier === "silver") return { label: "Gold", color: P.tierGold, remaining: Math.round((goldAt - pts) * 10) / 10 };
+  return null; // already gold
+}
+
 function calendarWeeks(y, m) {
   const firstDay = new Date(y, m - 1, 1).getDay();
   const offset = firstDay === 0 ? 6 : firstDay - 1;
@@ -355,20 +379,49 @@ function GlassCard({ children, className="", glow=false, glowColor=P.nebula, sty
 }
 
 function ConstellationBar({ pts, target }) {
-  const pct = target > 0 ? Math.min(pts / target, 1) : 0;
-  const hit = pts >= target;
+  const bronzeAt = Math.round(target * 0.6 * 10) / 10;
+  const goldAt = Math.round(target * 1.4 * 10) / 10;
+  const pct = goldAt > 0 ? Math.min(pts / goldAt, 1) : 0;
+  const tier = getTier(pts, target);
+  const tiers = [
+    { label: "Bronze", at: bronzeAt, color: P.tierBronze, pct: bronzeAt / goldAt },
+    { label: "Silver", at: target, color: P.tierSilver, pct: target / goldAt },
+    { label: "Gold", at: goldAt, color: P.tierGold, pct: 1 },
+  ];
   return (
-    <div className="tier-row">
-      <div className="tier-bar-bg">
-        <div className="tier-bar-fill" style={{ width: `${pct * 100}%`, background: hit ? P.gold : `linear-gradient(90deg, ${P.nebula}, ${P.aurora})` }} />
-        <div className="tier-bar-text">
-          <span className="tier-award" style={{ color: hit ? (pct > 0.5 ? P.bg : P.gold) : P.soft }}>
-            ✦ <span style={{ fontWeight: hit ? 600 : 400 }}>Constellation goal</span>
-          </span>
-          <span style={{ color: hit ? (pct > 0.5 ? P.bg : P.gold) : P.muted, fontSize: 12 }}>
-            {hit ? "✓ Complete" : `${Math.round((target - pts) * 10) / 10} to go`}
-          </span>
+    <div style={{ position: "relative" }}>
+      <div className="tier-bar-bg" style={{ height: 28, marginBottom: 4 }}>
+        <div className="tier-bar-fill" style={{
+          width: `${pct * 100}%`,
+          background: tier.tier === "gold" ? `linear-gradient(90deg, ${P.tierBronze}, ${P.tierSilver}, ${P.tierGold})`
+            : tier.tier === "silver" ? `linear-gradient(90deg, ${P.tierBronze}, ${P.tierSilver})`
+            : tier.tier === "bronze" ? P.tierBronze
+            : `linear-gradient(90deg, ${P.nebula}, ${P.aurora})`,
+          transition: "width 0.5s ease",
+        }} />
+        {tiers.map(t => (
+          <div key={t.label} style={{
+            position: "absolute", left: `${t.pct * 100}%`, top: 0, bottom: 0,
+            borderLeft: `1.5px dashed ${pts >= t.at ? t.color : P.dim}40`,
+            transform: "translateX(-1px)", pointerEvents: "none",
+          }} />
+        ))}
+        <div className="tier-bar-text" style={{ justifyContent: "center" }}>
+          {tier.tier !== "none" ? (
+            <span style={{ color: tier.color, fontSize: 12, fontWeight: 600 }}>✦ {tier.label}</span>
+          ) : (
+            <span style={{ color: P.soft, fontSize: 12 }}>✦ {Math.round(pts * 10) / 10} / {bronzeAt}</span>
+          )}
         </div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", padding: "0 2px" }}>
+        {tiers.map(t => (
+          <div key={t.label} style={{ textAlign: "center", flex: 1 }}>
+            <span style={{ color: pts >= t.at ? t.color : P.dim, fontSize: 10, fontWeight: pts >= t.at ? 600 : 400 }}>
+              {t.label}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -887,7 +940,7 @@ THE SCORING MODEL (do NOT change this, it is built into the app):
 - Presence bonus: +0.5 star if the session is mindful/phone-free (additive, max 1 per day)
 - Return-light bonus: +0.5 to +1.0 for coming back after missed days (additive)
 - Pacing: diminishing returns on BONUSES only for 2nd+ sessions per day — base star is always full
-- There are NO tiers (no bronze/silver/gold). Just a single weekly constellation goal.
+- There are 3 weekly tiers: Bronze (60% of weeklyStarTarget), Silver (100%), Gold (140%). Users unlock rewards at Silver.
 - minDuration is a suggested session length, NOT a minimum to earn stars.
 
 Respond with ONLY a JSON object (no markdown, no backticks, no explanation outside JSON):
@@ -1873,9 +1926,12 @@ function SettingsModal({ user, userData, onClose, onSignOut, onAccountDeleted, o
             <p style={{ color:P.muted, fontSize:11, marginBottom:6 }}>Preview</p>
             <p style={{ color:P.soft, fontSize:13, lineHeight:1.6 }}>
               <span style={{ color:P.nebula, fontWeight:600 }}>{editTargets.targetSessionsPerWeek}</span> sessions/week →{" "}
-              <span style={{ color:P.gold, fontWeight:600 }}>{editTargets.weeklyStarTarget}</span> weekly stars ·{" "}
-              <span style={{ color:P.text, fontWeight:600 }}>{editTargets.monthlyTarget}</span> monthly ·{" "}
-              <span style={{ color:P.gold, fontWeight:600 }}>{editTargets.monthlyStretch}</span> stretch
+              <span style={{ color:P.tierBronze, fontWeight:600 }}>{Math.round(editTargets.weeklyStarTarget * 0.6 * 10) / 10}</span> Bronze ·{" "}
+              <span style={{ color:P.tierSilver, fontWeight:600 }}>{editTargets.weeklyStarTarget}</span> Silver ·{" "}
+              <span style={{ color:P.tierGold, fontWeight:600 }}>{Math.round(editTargets.weeklyStarTarget * 1.4 * 10) / 10}</span> Gold
+            </p>
+            <p style={{ color:P.muted, fontSize:11, marginTop:4 }}>
+              Monthly: <span style={{ color:P.text }}>{editTargets.monthlyTarget}</span> · Stretch: <span style={{ color:P.gold }}>{editTargets.monthlyStretch}</span>
             </p>
           </div>
 
@@ -2398,18 +2454,6 @@ export default function StarFlow() {
   else if (streak >= 7) milestone = MILESTONE_COPY.streak_7;
   else if (streak >= 3) milestone = MILESTONE_COPY.streak_3;
 
-  let peekText = "";
-  if (!goalHit) {
-    const remaining = Math.round((targets.weeklyStarTarget - wp) * 10) / 10;
-    peekText = curPromise
-      ? `${remaining} stars toward: "${curPromise}"`
-      : `${remaining} stars from your constellation goal`;
-  } else {
-    peekText = curPromise
-      ? `Ready to honor: "${curPromise}"`
-      : "Your constellation is bright this week.";
-  }
-
   const prevMonth = () => { if (viewMonth === 1) { setViewMonth(12); setViewYear(viewYear - 1); } else setViewMonth(viewMonth - 1); };
   const nextMonth = () => { if (viewMonth === 12) { setViewMonth(1); setViewYear(viewYear + 1); } else setViewMonth(viewMonth + 1); };
 
@@ -2490,6 +2534,28 @@ export default function StarFlow() {
             <span style={{ color:streak > 0 ? P.gold : P.dim, fontSize:22, fontWeight:700, fontFamily:"'Cormorant Garamond', Georgia, serif" }}>{streak}</span>
             <p style={{ color:P.muted, fontSize:10, marginTop:2 }}>day streak</p>
           </div>
+        </div>
+
+        {/* Tier progress indicator */}
+        <div style={{ textAlign:"center", marginTop:12, marginBottom:4 }}>
+          {(() => {
+            const t = getTier(wp, targets.weeklyStarTarget);
+            const n = nextTierInfo(wp, targets.weeklyStarTarget);
+            if (t.tier !== "none" && !n) return (
+              <span style={{ color: P.tierGold, fontSize:13, fontWeight:500 }}>✦ Gold — {wp} stars this week</span>
+            );
+            if (t.tier !== "none") return (
+              <span style={{ fontSize:13 }}>
+                <span style={{ color: t.color, fontWeight:600 }}>✦ {t.label}</span>
+                <span style={{ color: P.muted }}> · {n.remaining} to </span>
+                <span style={{ color: n.color }}>{n.label}</span>
+              </span>
+            );
+            if (n) return (
+              <span style={{ color: P.muted, fontSize:13 }}>{n.remaining} stars to <span style={{ color: n.color }}>{n.label}</span></span>
+            );
+            return null;
+          })()}
         </div>
 
         {todayEntries.length > 0 && (
@@ -2608,7 +2674,18 @@ export default function StarFlow() {
         <GlassCard className="section-card" style={{ marginTop:8 }}>
           <div className="card-header">
             <h3 className="card-title">Week {cw}</h3>
-            <span className="card-pts" style={{ color:P.nebula }}>{wp} / {targets.weeklyStarTarget}</span>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              {getTier(wp, targets.weeklyStarTarget).tier !== "none" && (
+                <span style={{
+                  color: getTier(wp, targets.weeklyStarTarget).color,
+                  fontSize: 11, fontWeight: 600,
+                  padding: "2px 8px", borderRadius: 10,
+                  border: `1px solid ${getTier(wp, targets.weeklyStarTarget).color}40`,
+                  background: `color-mix(in srgb, ${getTier(wp, targets.weeklyStarTarget).color} 8%, transparent)`,
+                }}>✦ {getTier(wp, targets.weeklyStarTarget).label}</span>
+              )}
+              <span className="card-pts" style={{ color:P.nebula }}>{wp} stars</span>
+            </div>
           </div>
           {streak > 0
             ? <p style={{ color:P.gold, fontSize:13, marginBottom:6 }}>✦ {streak}-day streak</p>
@@ -2626,10 +2703,14 @@ export default function StarFlow() {
           )}
           {milestone && <p className="milestone">{milestone}</p>}
           <div className="divider" />
-          <p style={{ color:P.soft, fontSize:12, fontWeight:600, marginBottom:8 }}>Constellation Goal</p>
+          <p style={{ color:P.soft, fontSize:12, fontWeight:600, marginBottom:8 }}>Weekly Progress</p>
           <ConstellationBar pts={wp} target={targets.weeklyStarTarget} />
           <p style={{ color:P.soft, fontSize:12, marginTop:12 }}>
-            {goalHit ? `✦ ${peekText}` : `☽ ${peekText}`}
+            {(() => {
+              const next = nextTierInfo(wp, targets.weeklyStarTarget);
+              if (!next) return `✦ ${curPromise ? `Gold reached — honor: "${curPromise}"` : "Gold reached. Your constellation is radiant."}`;
+              return `☽ ${next.remaining} stars to ${next.label}`;
+            })()}
           </p>
         </GlassCard>
 
@@ -2639,14 +2720,14 @@ export default function StarFlow() {
         <div className="week-pills">
           {Array.from({ length: numWeeks }, (_, i) => i + 1).map(wk => {
             const wkPts = weekStars(entries, viewYear, viewMonth, wk, activities);
-            const wkGoal = wkPts >= targets.weeklyStarTarget;
+            const wkTier = getTier(wkPts, targets.weeklyStarTarget);
             const isCur = isCurrentMonth && wk === cw;
             return (
               <GlassCard key={wk} className={`week-pill ${isCur ? "current" : ""}`} glow={isCur} glowColor={P.nebula}>
                 <span className="wp-label">W{wk}</span>
                 <span className="wp-pts">{wkPts}</span>
-                {wkGoal
-                  ? <span className="wp-tier" style={{ color: P.gold }}>✦</span>
+                {wkTier.tier !== "none"
+                  ? <span className="wp-tier" style={{ color: wkTier.color, fontSize: 9 }}>✦ {wkTier.label}</span>
                   : <span className="wp-tier" style={{ color: P.dim }}>·</span>}
               </GlassCard>
             );
@@ -2658,8 +2739,9 @@ export default function StarFlow() {
         </div>
         {Array.from({ length: numWeeks }, (_, i) => i + 1).map(wk => {
           const wkPts = weekStars(entries, viewYear, viewMonth, wk, activities);
+          const wkTier = getTier(wkPts, targets.weeklyStarTarget);
           const wkGoal = wkPts >= targets.weeklyStarTarget;
-          const exceeded = wkPts >= targets.weeklyStarTarget * 1.5;
+          const exceeded = wkTier.tier === "gold";
           const rk = `${viewYear}-${String(viewMonth).padStart(2,"0")}-W${wk}`;
           const isClaimed = claimed.includes(rk);
           const hasPromise = !!promises[rk];
@@ -2672,7 +2754,12 @@ export default function StarFlow() {
             <GlassCard key={rk} className="section-card reward-row">
               <div style={{ marginBottom: hasPromise ? 8 : 0 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <span style={{ color:P.text, fontSize:13 }}>{dateLabel}</span>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ color:P.text, fontSize:13 }}>{dateLabel}</span>
+                    {wkTier.tier !== "none" && (
+                      <span style={{ color: wkTier.color, fontSize: 10, fontWeight: 600 }}>✦ {wkTier.label}</span>
+                    )}
+                  </div>
                   {!hasPromise && (isCurWeek || !weekPast) && !isClaimed && (
                     <button className="btn-ghost" style={{ fontSize:12, padding:"4px 12px", color:P.nebula }}
                       onClick={() => setPromiseModal({ wk, rk })}>Set intention</button>
@@ -2681,7 +2768,9 @@ export default function StarFlow() {
                     <span style={{ color:P.dim, fontSize:12 }}>No intention set</span>
                   )}
                   {hasPromise && !wkGoal && !weekPast && (
-                    <span style={{ color:P.dim, fontSize:12 }}>{Math.round((targets.weeklyStarTarget - wkPts) * 10) / 10} stars to go</span>
+                    <span style={{ color:P.dim, fontSize:12 }}>
+                      {(() => { const n = nextTierInfo(wkPts, targets.weeklyStarTarget); return n ? `${n.remaining} to ${n.label}` : ""; })()}
+                    </span>
                   )}
                   {hasPromise && wkGoal && !isClaimed && (
                     <button className="btn-primary" style={{ fontSize:12, padding:"4px 14px" }}
@@ -2826,7 +2915,10 @@ export default function StarFlow() {
             </p>
             <div className="divider" />
             <p style={{ color:P.soft, fontSize:12, marginTop:4 }}>
-              Weekly constellation goal: <span style={{ color:P.gold }}>{targets.weeklyStarTarget} stars</span> · Monthly: <span style={{ color:P.nebula }}>{targets.monthlyTarget}</span> · Stretch: <span style={{ color:P.gold }}>{targets.monthlyStretch}</span>
+              Weekly tiers: <span style={{ color:P.tierBronze }}>{Math.round(targets.weeklyStarTarget * 0.6 * 10) / 10} Bronze</span> · <span style={{ color:P.tierSilver }}>{targets.weeklyStarTarget} Silver</span> · <span style={{ color:P.tierGold }}>{Math.round(targets.weeklyStarTarget * 1.4 * 10) / 10} Gold</span>
+            </p>
+            <p style={{ color:P.soft, fontSize:12, marginTop:2 }}>
+              Monthly: <span style={{ color:P.nebula }}>{targets.monthlyTarget}</span> · Stretch: <span style={{ color:P.gold }}>{targets.monthlyStretch}</span>
             </p>
           </div>
           <button className="btn-primary" onClick={() => setShowGuide(false)} style={{ marginTop:20 }}>I understand</button>
